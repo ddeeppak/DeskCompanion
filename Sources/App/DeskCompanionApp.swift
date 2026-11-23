@@ -24,6 +24,8 @@ struct DeskCompanionApp: App {
     @StateObject private var proximity = ProximityService()
     @StateObject private var noise = NoiseMeter()
     @StateObject private var briefing = BriefingService()
+    @StateObject private var commands = CommandStore()
+    @StateObject private var control = AppControl()
 
     init() {
         // Alarms ring inside the app; the backup notification is only for when the app isn't open.
@@ -57,6 +59,7 @@ struct DeskCompanionApp: App {
                 .environmentObject(proximity)
                 .environmentObject(noise)
                 .environmentObject(briefing)
+                .environmentObject(commands)
                 .onAppear {
                     ai.app = app
                     noise.speech = speech
@@ -66,12 +69,18 @@ struct DeskCompanionApp: App {
                     presence.onReturn = {
                         night.setAway(false)
                         app.registerTouch()
-                        // Morning briefing / evening wrap-up when you sit down.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { briefing.check() }
+                        // Your "when I sit down" commands first, then the morning briefing / evening wrap-up.
+                        let arrival = commands.arrivalRoutines()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            for routine in arrival { assistant.runTriggered(routine) }
+                            if arrival.isEmpty { briefing.check() }
+                        }
                     }
                     // Wave over the sensor near the earpiece.
                     proximity.onWave = {
-                        if presence.isAway {
+                        if assistant.confirmation != nil {
+                            assistant.confirmPending()          // wave = yes
+                        } else if presence.isAway {
                             presence.markPresent()
                         } else if night.showNight {
                             night.peek()
@@ -86,6 +95,12 @@ struct DeskCompanionApp: App {
                     noise.start()
                     assistant.configure(app: app, planner: planner, alarms: alarms, timer: quickTimer,
                                         focus: focus, weather: weather, speech: speech, voice: voice, ai: ai)
+                    control.configure(app: app, night: night, voice: voice, assistant: assistant, briefing: briefing,
+                                      presence: presence, proximity: proximity, noise: noise, alarms: alarms,
+                                      focus: focus, library: library, ai: ai, habits: habits, commands: commands)
+                    assistant.attach(control: control, commands: commands)
+                    // The iPhone owns memory: take over the PC's facts the first time it connects.
+                    ai.onMemories = { facts in commands.importFromPC(facts) }
                     ai.startDiscovery()
                     ai.check()
                 }

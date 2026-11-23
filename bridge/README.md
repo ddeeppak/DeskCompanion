@@ -24,7 +24,8 @@ Double-click `start_bridge.bat` (or run `python desk_bridge.py`).
   - `stream: true` → newline-delimited JSON: `{"delta": "..."}` pieces, then `{"done": true, "answer", "ms", "firstMs", "model"}`
   - otherwise → `{answer, ms, firstMs, model}`
 - `POST /reset`: start a fresh conversation
-- `GET /memory`, `POST /memory {add | remove | clear}`: long-term memory, stored in `memory.local.json` (not committed). Claude's `remember` / `forget` actions update it, and the facts are given to Claude with every question.
+- `GET /memory`, `POST /memory {add | remove | clear | replace}`: the PC's backup of long-term memory, in `memory.local.json` (not committed). Since v0.9 the iPhone owns memory and sends it with every question; `replace` is its backup.
+- v0.9: Claude can control every app setting (`set_setting`), open screens, play sounds, run and create the user's own commands (`run_routine`, `create_routine`) and more; see `SYSTEM_PROMPT`.
 - Claude can also reply with `QUERY` lines (calendar for any day, tasks, alarms, weather, focus); the phone answers them and Claude continues.
 - **One warm Claude Code session** (`--input-format stream-json`) stays running, so answers start in about 1 s instead of paying the 2–3 s start-up each time. It remembers the conversation and refreshes after 30 min idle or 40 questions.
 - Claude Code runs in an empty temp folder with **no tools**, no MCP servers and no saved session, so it only answers.

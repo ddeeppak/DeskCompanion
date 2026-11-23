@@ -1,4 +1,5 @@
 import Speech
+import Network
 import AVFoundation
 import Combine
 
@@ -39,6 +40,14 @@ final class SpeechService: ObservableObject {
     private var onFinish: ((String) -> Void)?
     private var lastLevelPublish = Date.distantPast
     private var noSpeechTimeout: TimeInterval = 7
+    /// Words to listen out for (task and event names, command words). Improves recognition a lot.
+    var hints: [String] = []
+    /// Apple's server recognizer is far more accurate than the iPhone 7's on-device one: use it when online.
+    private static let network: NWPathMonitor = {
+        let monitor = NWPathMonitor()
+        monitor.start(queue: DispatchQueue(label: "speech.network"))
+        return monitor
+    }()
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "speech.locale")
@@ -99,7 +108,9 @@ final class SpeechService: ObservableObject {
         }
         let newRequest = SFSpeechAudioBufferRecognitionRequest()
         newRequest.shouldReportPartialResults = true
-        if recognizer.supportsOnDeviceRecognition { newRequest.requiresOnDeviceRecognition = true }
+        let online = Self.network.currentPath.status == .satisfied
+        newRequest.requiresOnDeviceRecognition = !online && recognizer.supportsOnDeviceRecognition
+        newRequest.contextualStrings = Array(hints.prefix(100))
         request = newRequest
 
         let input = audioEngine.inputNode
@@ -242,6 +253,9 @@ final class VoiceService: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         streamBuffer = ""
         synthesizer.stopSpeaking(at: .immediate)
     }
+
+    /// True while anything is still being read out or more sentences are on their way.
+    var isBusy: Bool { synthesizer.isSpeaking || streaming }
 
     // MARK: Streamed speech (AI answers): speak each finished sentence while the rest is still arriving
 

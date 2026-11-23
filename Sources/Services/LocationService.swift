@@ -6,11 +6,18 @@ import Combine
 final class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var location: CLLocation? = nil
     @Published private(set) var authorization: CLAuthorizationStatus = .notDetermined
+    /// Town or city name from the coordinates ("Bengaluru"); nil until looked up once.
+    @Published private(set) var placeName: String? = UserDefaults.standard.string(forKey: "location.place")
 
     private let manager = CLLocationManager()
     private var lastRequest = Date.distantPast
     private let latKey = "location.lat"
     private let lonKey = "location.lon"
+    private let geocoder = CLGeocoder()
+    private var namedLocation: CLLocation? = nil
+
+    /// "My Location" until the place name is known.
+    var displayName: String { placeName ?? "My Location" }
 
     override init() {
         super.init()
@@ -62,6 +69,22 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         location = latest
         UserDefaults.standard.set(latest.coordinate.latitude, forKey: latKey)
         UserDefaults.standard.set(latest.coordinate.longitude, forKey: lonKey)
+        lookUpName(latest)
+    }
+
+    /// Coordinates → town name (Apple's geocoder, needs internet). Only again if the desk moved over 2 km.
+    private func lookUpName(_ location: CLLocation) {
+        if placeName != nil, let named = namedLocation, named.distance(from: location) < 2000 { return }
+        geocoder.cancelGeocode()
+        geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, _ in
+            guard let self = self, let mark = placemarks?.first,
+                  let name = mark.locality ?? mark.subAdministrativeArea ?? mark.subLocality ?? mark.name else { return }
+            DispatchQueue.main.async {
+                self.namedLocation = location
+                self.placeName = name
+                UserDefaults.standard.set(name, forKey: "location.place")
+            }
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

@@ -12,7 +12,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 /// Result card on the right of the answer screen (design: icon tile, title, detail, Edit / Undo).
 struct ActionCard: Equatable {
     enum Kind { case reminder, task, timer, alarm, focus, info, weather, calendar, ai, offline }
-    enum Undo: Equatable { case reminder(String), task(String), alarm(UUID), timer, focus }
+    enum Undo: Equatable { case reminder(String), task(String), alarm(UUID), timer, focus, custom(UUID) }
 
     let kind: Kind
     let heading: String        // "Reminder created"
@@ -22,7 +22,14 @@ struct ActionCard: Equatable {
     let canEdit: Bool
 }
 
-/// The voice assistant: listen → understand (offline rules) → act → reply (text + voice).
+/// Tracks one AI request, so a slow answer can hand over to the phone's own commands.
+private final class AskProgress {
+    var received = false
+    var done = false
+    var fellBack = false
+}
+
+/// The voice assistant: listen → understand (your commands, the AI, or the phone's rules) → act → reply.
 final class AssistantService: ObservableObject {
     enum Phase: Equatable { case idle, listening, thinking, answered, misheard, noPermission }
 
@@ -50,6 +57,20 @@ final class AssistantService: ObservableObject {
     private var followUpArmed = false
     private var cancellables = Set<AnyCancellable>()
 
+    /// "ai": the AI understands everything (phone parser as fallback). "phone": the phone's rules first.
+    @Published var routing: String {
+        didSet { UserDefaults.standard.set(routing, forKey: "assistant.routing") }
+    }
+    /// A question waiting for yes / no ("Delete all 3 alarms?").
+    @Published private(set) var confirmation: String? = nil
+    private var pendingRun: (() -> Void)? = nil
+    /// Undo for the card on screen (several changes undone together).
+    private var undoBlocks: [UUID: () -> Void] = [:]
+    /// Undo steps added by perform() for the action that just ran.
+    private var pendingUndo: [() -> Void] = []
+    private weak var control: AppControl?
+    private weak var commands: CommandStore?
+
     private var app: AppState?
     private var planner: PlannerService?
     private var alarms: AlarmStore?
@@ -64,6 +85,7 @@ final class AssistantService: ObservableObject {
 
     init() {
         keepListening = UserDefaults.standard.object(forKey: "assistant.keepListening") as? Bool ?? true
+        routing = UserDefaults.standard.string(forKey: "assistant.routing") ?? "ai"
         // Keep only today's conversation.
         if let data = UserDefaults.standard.data(forKey: Self.historyKey),
            let saved = try? JSONDecoder().decode([ChatMessage].self, from: data) {
@@ -87,10 +109,15 @@ final class AssistantService: ObservableObject {
         // When the voice finishes speaking an answer, listen for a follow-up.
         voice.$speaking
             .removeDuplicates()
+            .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
             .filter { !$0 }
-            .debounce(for: .milliseconds(350), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.speakingEnded() }
             .store(in: &cancellables)
+    }
+
+    func attach(control: AppControl, commands: CommandStore) {
+        self.control = control
+        self.commands = commands
     }
 
     /// Call right before speaking an answer that may have a follow-up.
@@ -104,6 +131,11 @@ final class AssistantService: ObservableObject {
 
     private func speakingEnded() {
         guard followUpArmed else { return }
+        // Still reading the answer (a short pause between sentences): try again a little later.
+        if voice?.isBusy == true {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.speakingEnded() }
+            return
+        }
         followUpArmed = false
         guard phase == .answered, app?.screen == .assistant, !(speech?.isListening ?? true) else { return }
         listen(followUp: true)
@@ -119,6 +151,7 @@ final class AssistantService: ObservableObject {
         isFollowUp = followUp
         app?.screen = .assistant
         phase = .listening
+        speech.hints = listeningHints()
         speech.start(onFinish: { [weak self] text in
             self?.received(text)
         }, onDenied: { [weak self] in
@@ -127,6 +160,59 @@ final class AssistantService: ObservableObject {
     }
 
     func stopListening() { speech?.stop() }
+
+    /// Your own task and event names plus command words, so the recognizer expects them.
+    private func listeningHints() -> [String] {
+        var words = ["remind me", "reminder", "alarm", "timer", "calendar", "focus", "pomodoro", "tasks", "to-do list",
+                     "tick off", "weather", "tomorrow", "holiday", "holidays", "remember that", "forget",
+                     "warm style", "calm style", "futuristic style", "cancel the timer", "what's on"]
+        words += (planner?.tasks ?? []).filter { !$0.isCompleted }.map { $0.title }
+        words += (planner?.events ?? []).map { $0.title }
+        words += (commands?.routines ?? []).filter { $0.enabled }.flatMap { $0.phrases }
+        words += (commands?.learned ?? []).prefix(20).map { $0.phrase }
+        return words
+    }
+
+    // MARK: Small talk that ends a conversation ("thanks", "bye", a lone "okay")
+
+    private static let closerWords: Set<String> = ["thanks", "thank", "you", "bye", "goodbye", "good", "night", "later",
+        "see", "ya", "no", "nope", "that's", "thats", "all", "it", "for", "now", "nothing", "never", "mind", "else",
+        "ok", "okay", "alright", "all right", "cool", "great", "perfect", "fine", "sure", "oh", "ah", "hmm", "um",
+        "so", "awesome", "nice", "got", "yes", "yeah", "yep", "much", "very", "a", "lot", "lots", "cheers", "done"]
+    private static let strongClosers: Set<String> = ["thanks", "thank", "bye", "goodbye", "later", "cheers",
+                                                     "nothing", "mind", "all"]
+
+    /// nil = a real request. Otherwise the reply to say ("" = end quietly).
+    private func closingReply(_ text: String) -> String? {
+        let words = text.lowercased()
+            .components(separatedBy: CharacterSet.letters.union(CharacterSet(charactersIn: "'")).inverted)
+            .filter { !$0.isEmpty }
+        guard !words.isEmpty, words.count <= 8, words.allSatisfy({ Self.closerWords.contains($0) }) else { return nil }
+        let strong = words.contains { Self.strongClosers.contains($0) }
+        if !strong {
+            // A lone "okay" / "yes" / "no" answers the AI's question if it just asked one.
+            if let last = messages.last, !last.fromUser, last.text.trimmingCharacters(in: .whitespaces).hasSuffix("?") {
+                return nil
+            }
+            return ""
+        }
+        if words.contains(where: { ["bye", "goodbye", "later", "night"].contains($0) }) {
+            return "Bye! I'm here if you need me."
+        }
+        return "You're welcome!"
+    }
+
+    /// The AI's last reply was a question, so the next thing you say is probably its answer.
+    private var aiJustAsked: Bool {
+        guard let last = messages.last, !last.fromUser, last.source == "ai" else { return false }
+        return last.text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
+    }
+
+    private static func soundsLikeGoodbye(_ answer: String) -> Bool {
+        let t = answer.lowercased()
+        return ["goodbye", "bye!", "bye.", "have a good", "have a great", "have a nice", "you're welcome",
+                "talk to you later", "see you"].contains { t.contains($0) } && !t.contains("?")
+    }
 
     func cancelListening() {
         askTask?.cancel()
@@ -161,11 +247,60 @@ final class AssistantService: ObservableObject {
             pendingPrefix = nil
             text = "\(prefix) \(spoken)"
         }
+        if confirmation != nil {
+            answerConfirmation(text)
+            return
+        }
+        if let closing = closingReply(text) {
+            followUpArmed = false
+            card = nil
+            if closing.isEmpty {
+                phase = messages.isEmpty ? .idle : .answered   // nothing to answer: stop quietly
+                return
+            }
+            append(ChatMessage(fromUser: true, text: text, source: nil, date: Date()))
+            append(ChatMessage(fromUser: false, text: closing, source: "offline", date: Date()))
+            phase = .answered
+            voice?.speak(closing)
+            return
+        }
+        // 1. Your own commands (exact or nearly), then phrases the AI taught the phone: instant, offline.
+        if let routine = commands?.matchRoutine(text) {
+            runRoutine(routine, said: text)
+            return
+        }
+        if let item = commands?.matchLearned(text) {
+            commands?.used(item)
+            append(ChatMessage(fromUser: true, text: text, source: nil, date: Date()))
+            execute(item.steps, source: "offline", ms: 0, learnFrom: nil, heading: nil)
+            return
+        }
         let started = Date()
+        if let ai = ai, ai.isConfigured, aiJustAsked, !CommandParser.isExplicitCommand(text) {
+            askAI(text)                           // "On December 25" after "Which day?"
+            return
+        }
         let intent = CommandParser.parse(text)
+        // 2. AI first: it understands any phrasing and can do several things at once. Clear-cut commands
+        //    (timers, alarms, stop, the time) stay instant; if the AI is slow, the phone takes over.
+        if routing == "ai", let ai = ai, ai.isConfigured, ai.state != .offline, ai.state != .wrongCode,
+           !Self.isClearCut(intent, text: text) {
+            askAI(text, fallback: intent, learn: !isSmallTalk(text))
+            return
+        }
+        // A task named in a command that isn't on your list: let the AI work out what you meant.
+        switch intent {
+        case .completeTask(let name), .deleteTask(let name):
+            if planner?.findTask(name) == nil, let ai = ai, ai.isConfigured {
+                askAI(text)
+                return
+            }
+        default:
+            break
+        }
         if intent == .unknown {
             if let ai = ai, ai.isConfigured {
-                askAI(text)                       // a question for the AI on the PC
+                askAI(text, learn: !isSmallTalk(text))   // a question for the AI on the PC
             } else if Self.looksLikeQuestion(text) {
                 answerOffline(text, reason: "The AI on your PC isn't set up yet, so I can't answer questions. Timers, reminders, lists and calendar still work.")
             } else {
@@ -176,18 +311,37 @@ final class AssistantService: ObservableObject {
             }
             return
         }
-        let reply = perform(intent)
+        runLocal(intent, text: text, started: started)
+    }
+
+    /// The phone's own command (offline). Bulk deletes ask first.
+    private func runLocal(_ intent: VoiceIntent, text: String, started: Date) {
+        append(ChatMessage(fromUser: true, text: text, source: nil, date: Date()))
+        if case .deleteAlarm(_, _, _, let all) = intent, all, let count = alarms?.alarms.count, count > 1 {
+            askConfirmation("Delete all \(count) alarms?", source: "offline") { [weak self] in
+                guard let self = self else { return }
+                self.showLocal(self.perform(intent), intent: intent, started: Date())
+            }
+            return
+        }
+        showLocal(perform(intent), intent: intent, started: started)
+    }
+
+    private func showLocal(_ reply: (text: String, card: ActionCard?), intent: VoiceIntent, started: Date) {
         handledIn = Date().timeIntervalSince(started)
         undone = false
-        append(ChatMessage(fromUser: true, text: text, source: nil, date: Date()))
         append(ChatMessage(fromUser: false, text: reply.text, source: "offline", date: Date()))
-        card = reply.card
+        var blocks = takePendingUndo()
+        if !blocks.isEmpty, let token = reply.card?.undo, let block = undoBlock(token) { blocks.insert(block, at: 0) }
+        card = blocks.isEmpty ? reply.card : withUndo(reply.card, blocks, summary: reply.text)
         phase = .answered
-        if reply.card?.undo != nil { Haptics.success() }
+        if card?.undo != nil { Haptics.success() }
         if case .needsTime = intent {
             followUpArmed = true            // "For what time?": always listen for the answer
         } else if case .startFocus = intent {
             followUpArmed = false           // switching to the Focus screen
+        } else if pendingPrefix != nil {
+            followUpArmed = true            // "Which one?"
         } else {
             armFollowUp()
         }
@@ -198,11 +352,238 @@ final class AssistantService: ObservableObject {
         }
     }
 
+    /// Commands that can't be misunderstood run instantly on the phone, even in AI-first mode.
+    private static func isClearCut(_ intent: VoiceIntent, text: String) -> Bool {
+        let lower = text.lowercased()
+        if lower.contains(" and ") || lower.contains(" then ") { return false }     // several requests: the AI
+        let words = lower.split(separator: " ").count
+        switch intent {
+        case .timer, .alarm: return !looksLikeQuestion(text)
+        case .cancelTimer, .stopFocus: return true
+        case .time, .date: return words <= 5
+        case .deleteAlarm(let hour, _, _, _): return hour != nil
+        default: return false
+        }
+    }
+
+    /// "okay", "thanks", "yes": never learned as a command.
+    private func isSmallTalk(_ text: String) -> Bool {
+        let words = text.lowercased()
+            .components(separatedBy: CharacterSet.letters.union(CharacterSet(charactersIn: "'")).inverted)
+            .filter { !$0.isEmpty }
+        return words.isEmpty || words.allSatisfy { Self.closerWords.contains($0) }
+    }
+
+    // MARK: Running actions (AI replies, your commands, learned phrases)
+
+    private static let learnableTypes: Set<String> = ["setsetting", "set", "setstyle", "open", "playsound", "stopsound",
+        "runroutine", "briefing", "focus", "stopfocus", "canceltimer", "timer", "extendfocus", "skip", "startbreak",
+        "snooze", "stopalarm", "completehabit"]
+
+    /// Runs ACTION steps. The question is already in the conversation.
+    private func execute(_ lines: [String], source: String, ms: Int, learnFrom: String?, heading: String?,
+                         conversational: Bool = true, confirmed: Bool = false) {
+        // Bulk or destructive changes ask first ("Delete all 3 alarms?").
+        if !confirmed, let control = control,
+           let prompt = lines.compactMap({ CommandStore.json($0) }).compactMap({ control.confirmationPrompt($0) }).first {
+            askConfirmation(prompt, source: source) { [weak self] in
+                self?.execute(lines, source: source, ms: ms, learnFrom: nil, heading: heading,
+                              conversational: conversational, confirmed: true)
+            }
+            return
+        }
+        var replies: [(text: String, card: ActionCard?)] = []
+        var undos: [() -> Void] = []
+        var startsFocus = false
+        var opensScreen = false
+
+        func runOne(_ line: String) {
+            guard let object = CommandStore.json(line) else { return }
+            let type = CommandStore.type(object)
+            if type == "focus" { startsFocus = true }
+            if type == "open" { opensScreen = true }
+            if let result = control?.apply(object) {
+                replies.append((text: result.text, card: result.card))
+                if let undo = result.undo { undos.append(undo) }
+            } else if let intent = Self.intent(fromActionLine: line) {
+                let reply = perform(intent)
+                replies.append(reply)
+                if let token = reply.card?.undo, let block = undoBlock(token) { undos.append(block) }
+                undos.append(contentsOf: takePendingUndo())
+            } else if let reply = extraAction(line) {
+                replies.append(reply)
+                undos.append(contentsOf: takePendingUndo())
+            }
+        }
+
+        for line in lines {
+            guard let object = CommandStore.json(line) else { continue }
+            if CommandStore.type(object) == "runroutine" {
+                let name = CommandStore.value(object["name"])
+                if let routine = commands?.routine(named: name) {
+                    for step in routine.steps where CommandStore.type(CommandStore.json(step) ?? [:]) != "runroutine" {
+                        runOne(step)
+                    }
+                } else {
+                    replies.append((text: "I couldn't find a command called \(name).", card: nil))
+                }
+                continue
+            }
+            runOne(line)
+        }
+
+        guard !replies.isEmpty else {
+            append(ChatMessage(fromUser: false, text: "Sorry, I couldn't do that.", source: source, date: Date()))
+            card = nil
+            phase = .answered
+            voice?.speak("Sorry, I couldn't do that.")
+            return
+        }
+        let text = replies.map { $0.text }.filter { !$0.isEmpty }.joined(separator: " ")
+        handledIn = Double(ms) / 1000
+        undone = false
+        append(ChatMessage(fromUser: false, text: text.isEmpty ? "Done." : text, source: source, date: Date()))
+        var shown = replies.last(where: { $0.card != nil })?.card
+        if let heading = heading {
+            shown = ActionCard(kind: .info, heading: "Your command", title: heading,
+                               detail: "\(lines.count) step\(lines.count == 1 ? "" : "s") done", undo: nil, canEdit: true)
+        }
+        card = undos.isEmpty ? shown.map { Self.removingUndo($0) } : withUndo(shown, undos, summary: text)
+        phase = .answered
+        if !undos.isEmpty { Haptics.success() }
+
+        // Teach the phone this phrasing, so next time it's instant and works offline.
+        if let phrase = learnFrom, phrase.split(separator: " ").count <= 8,
+           lines.allSatisfy({ Self.learnableTypes.contains(CommandStore.type(CommandStore.json($0) ?? [:])) }) {
+            commands?.learn(phrase, steps: lines)
+        }
+
+        if conversational && !startsFocus && !opensScreen {
+            armFollowUp()
+        } else {
+            followUpArmed = false
+        }
+        voice?.speak(text.isEmpty ? "Done." : text)
+        if startsFocus {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.app?.screen = .focus }
+        }
+    }
+
+    /// Runs one of your commands (said, or the play button in Settings).
+    func runRoutine(_ routine: Routine, said: String? = nil) {
+        if let said = said {
+            append(ChatMessage(fromUser: true, text: said, source: nil, date: Date()))
+        }
+        execute(routine.steps, source: "offline", ms: 0, learnFrom: nil, heading: routine.name,
+                conversational: said != nil)
+    }
+
+    /// A command running by itself (its time came, or you sat down).
+    func runTriggered(_ routine: Routine) {
+        guard !(speech?.isListening ?? false), phase != .thinking else { return }
+        execute(routine.steps, source: "offline", ms: 0, learnFrom: nil, heading: routine.name, conversational: false)
+    }
+
+    // MARK: Yes / no
+
+    private func askConfirmation(_ prompt: String, source: String, run: @escaping () -> Void) {
+        confirmation = prompt
+        pendingRun = run
+        append(ChatMessage(fromUser: false, text: prompt, source: source, date: Date()))
+        card = nil
+        phase = .answered
+        followUpArmed = true                         // listen for the yes / no
+        Haptics.warning()
+        voice?.speak(prompt)
+        if !(voice?.enabled ?? true) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.speakingEnded() }
+        }
+    }
+
+    /// Yes (button, voice or a wave over the sensor).
+    func confirmPending() {
+        guard let run = pendingRun else { return }
+        confirmation = nil
+        pendingRun = nil
+        followUpArmed = false
+        if speech?.isListening == true { speech?.cancel() }
+        run()
+    }
+
+    func declinePending() {
+        guard confirmation != nil else { return }
+        confirmation = nil
+        pendingRun = nil
+        followUpArmed = false
+        if speech?.isListening == true { speech?.cancel() }
+        append(ChatMessage(fromUser: false, text: "Okay, I won't.", source: "offline", date: Date()))
+        card = nil
+        phase = .answered
+        voice?.speak("Okay, I won't.")
+    }
+
+    private func answerConfirmation(_ text: String) {
+        let t = CommandStore.normalize(text)
+        let words = Set(t.split(separator: " ").map(String.init))
+        let no = !words.isDisjoint(with: ["no", "nope", "don't", "dont", "cancel", "stop", "keep", "wait"])
+            || t.contains("never mind")
+        let yes = !words.isDisjoint(with: ["yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "correct", "definitely"])
+            || t.contains("do it") || t.contains("go ahead")
+        if yes && !no {
+            append(ChatMessage(fromUser: true, text: text, source: nil, date: Date()))
+            confirmPending()
+        } else if no {
+            append(ChatMessage(fromUser: true, text: text, source: nil, date: Date()))
+            declinePending()
+        } else {
+            // Something else entirely: drop the question and treat it as a new request.
+            confirmation = nil
+            pendingRun = nil
+            handle(text)
+        }
+    }
+
+    // MARK: Undo helpers
+
+    private func takePendingUndo() -> [() -> Void] {
+        let blocks = pendingUndo
+        pendingUndo = []
+        return blocks
+    }
+
+    private func undoBlock(_ token: ActionCard.Undo) -> (() -> Void)? {
+        switch token {
+        case .reminder(let id), .task(let id): return { [weak self] in self?.planner?.deleteReminder(id: id) }
+        case .alarm(let id): return { [weak self] in self?.alarms?.remove(id) }
+        case .timer: return { [weak self] in self?.timer?.cancel() }
+        case .focus: return { [weak self] in self?.focus?.reset() }
+        case .custom(let id): return undoBlocks[id]
+        }
+    }
+
+    private static func removingUndo(_ card: ActionCard) -> ActionCard {
+        ActionCard(kind: card.kind, heading: card.heading, title: card.title, detail: card.detail, undo: nil, canEdit: card.canEdit)
+    }
+
+    /// One Undo button for everything that just changed.
+    private func withUndo(_ card: ActionCard?, _ blocks: [() -> Void], summary: String) -> ActionCard? {
+        guard !blocks.isEmpty else { return card }
+        let id = UUID()
+        undoBlocks = [id: { blocks.reversed().forEach { $0() } }]    // only the card on screen can be undone
+        if let c = card {
+            return ActionCard(kind: c.kind, heading: c.heading, title: c.title, detail: c.detail, undo: .custom(id), canEdit: c.canEdit)
+        }
+        let title = summary.count > 60 ? String(summary.prefix(57)) + "…" : summary
+        return ActionCard(kind: .info, heading: "Done", title: title, detail: "Tap Undo to change it back",
+                          undo: .custom(id), canEdit: false)
+    }
+
     // MARK: Local AI (Desk Bridge on the PC)
 
     /// Round 0 is your question. Later rounds send lookup RESULTS back to the AI (up to 3 rounds).
-    private func askAI(_ question: String, round: Int = 0) {
+    private func askAI(_ question: String, round: Int = 0, fallback: VoiceIntent? = nil, learn: Bool = false) {
         guard let ai = ai, let voice = voice else { return }
+        let progress = AskProgress()
         let history = round == 0 ? messages : []
         if round == 0 {
             lastQuestion = question
@@ -237,9 +618,21 @@ final class AssistantService: ObservableObject {
 
         voice.beginStream()
         askTask?.cancel()
+        // The AI is slow and the phone knows this command: don't keep you waiting.
+        if round == 0, let fallback = fallback, fallback != .unknown {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self = self, !progress.received, !progress.done, self.phase == .thinking else { return }
+                progress.fellBack = true
+                self.askTask?.cancel()
+                voice.stop()
+                if let last = self.messages.last, last.fromUser, last.text == question { self.messages.removeLast() }
+                self.runLocal(fallback, text: question, started: Date())
+            }
+        }
         askTask = Task { [weak self] in
             do {
                 let result = try await ai.ask(question, context: self?.aiContext() ?? [:], history: history) { incoming in
+                    progress.received = true
                     fullText += incoming
                     guard !isAction else { return }
                     if fullText.range(of: "ACTION") != nil || fullText.range(of: "QUERY") != nil {
@@ -255,7 +648,8 @@ final class AssistantService: ObservableObject {
                     show(String(fullText[from..<to]))
                 }
                 await MainActor.run {
-                    guard let self = self else { return }
+                    guard let self = self, !progress.fellBack else { return }
+                    progress.done = true
                     if result.answer.contains("QUERY") {
                         // The AI needs to look something up: answer its lookups and send the results back.
                         voice.stop()
@@ -273,14 +667,18 @@ final class AssistantService: ObservableObject {
                     if isAction || result.answer.contains("ACTION") {
                         voice.stop()
                         self.messages.removeAll { $0.id == answerID }     // drop any explanation shown before the action
-                        self.performAIAction(result.answer, question: question, ms: result.ms)
+                        self.performAIAction(result.answer, learnFrom: (round == 0 && learn) ? question : nil, ms: result.ms)
                         return
                     }
                     if shownCount < fullText.count {                      // the held-back tail
                         show(String(fullText[fullText.index(fullText.startIndex, offsetBy: shownCount)...]))
                         shownCount = fullText.count
                     }
-                    self.armFollowUp()
+                    if Self.soundsLikeGoodbye(result.answer) {
+                        self.followUpArmed = false      // the AI said goodbye: don't keep listening
+                    } else {
+                        self.armFollowUp()
+                    }
                     voice.endStream()
                     if let index = self.messages.lastIndex(where: { $0.id == answerID }) {
                         self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: result.answer,
@@ -298,12 +696,18 @@ final class AssistantService: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    guard let self = self else { return }
+                    guard let self = self, !progress.fellBack else { return }
+                    progress.done = true
                     voice.stop()
                     // Drop a half-streamed answer, then show the offline state.
                     let asked = round == 0 ? question : self.lastQuestion
                     self.messages.removeAll { $0.id == answerID }
                     if let last = self.messages.last, last.fromUser, last.text == asked { self.messages.removeLast() }
+                    // The phone knows this command: do it here instead.
+                    if round == 0, let fallback = fallback, fallback != .unknown {
+                        self.runLocal(fallback, text: question, started: Date())
+                        return
+                    }
                     let reason: String
                     switch error as? AIService.AIError {
                     case .wrongCode?:
@@ -319,39 +723,12 @@ final class AssistantService: ObservableObject {
         }
     }
 
-    /// The AI replied with one or more `ACTION {json}` lines: run each like the phone's own commands.
-    private func performAIAction(_ raw: String, question: String, ms: Int) {
-        let lines = raw.components(separatedBy: .newlines).filter { $0.contains("ACTION") }
-        var intents: [VoiceIntent] = []
-        var direct: [(text: String, card: ActionCard?)] = []
-        for line in lines {
-            if let intent = Self.intent(fromActionLine: line) {
-                intents.append(intent)
-            } else if let reply = extraAction(line) {
-                direct.append(reply)
-            }
-        }
-        // The question was already added to the conversation.
-        guard !intents.isEmpty || !direct.isEmpty else {
-            append(ChatMessage(fromUser: false, text: "Sorry, I couldn't do that.", source: "ai", date: Date()))
-            card = nil
-            phase = .answered
-            voice?.speak("Sorry, I couldn't do that.")
-            return
-        }
-        let replies = intents.map { perform($0) } + direct
-        let text = replies.map { $0.text }.joined(separator: " ")
-        handledIn = Double(ms) / 1000
-        undone = false
-        append(ChatMessage(fromUser: false, text: text, source: "ai", date: Date()))
-        card = replies.last?.card
-        phase = .answered
-        if replies.contains(where: { $0.card?.undo != nil }) { Haptics.success() }
-        armFollowUp()
-        voice?.speak(text)
-        if intents.contains(where: { if case .startFocus = $0 { return true } else { return false } }) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.app?.screen = .focus }
-        }
+    /// The AI replied with one or more `ACTION {json}` lines: run them.
+    private func performAIAction(_ raw: String, learnFrom: String?, ms: Int) {
+        let lines = raw.components(separatedBy: .newlines)
+            .filter { $0.contains("ACTION") }
+            .compactMap { CommandStore.json($0).map { CommandStore.step($0) } }
+        execute(lines, source: "ai", ms: ms, learnFrom: learnFrom, heading: nil)
     }
 
     /// The JSON object on an ACTION / QUERY line.
@@ -380,36 +757,31 @@ final class AssistantService: ObservableObject {
         let title = (json["title"] as? String) ?? ""
         switch type {
         case "completetask":
-            guard let task = planner?.findTask(title) else { return ("I couldn't find a task called \(title).", nil) }
-            if task.isCompleted { return ("\(task.title) is already done.", nil) }
-            planner?.setCompleted(task, true)
-            return ("Ticked off \(task.title).",
-                    ActionCard(kind: .task, heading: "Task done", title: task.title,
-                               detail: planner?.selectedListTitle ?? "", undo: nil, canEdit: true))
+            return perform(.completeTask(title))
         case "deletetask":
-            guard let task = planner?.findTask(title) else { return ("I couldn't find a task called \(title).", nil) }
-            planner?.deleteReminder(id: task.id)
-            return ("Deleted \(task.title).", nil)
+            return perform(.deleteTask(title))
         case "movereminder":
-            guard let task = planner?.findTask(title) else { return ("I couldn't find a reminder called \(title).", nil) }
+            guard let planner = planner, let task = planner.findTask(title) else { return ("I couldn't find a reminder called \(title).", nil) }
+            let oldDue = task.hasDueTime ? task.dueDate : nil
             guard let text = json["due"] as? String, let due = Self.localDate(String(text.prefix(16)), format: "yyyy-MM-dd'T'HH:mm"),
-                  planner?.reschedule(task, to: due) == true else { return ("Sorry, I couldn't move \(task.title).", nil) }
+                  planner.reschedule(task, to: due) else { return ("Sorry, I couldn't move \(task.title).", nil) }
+            if let oldDue = oldDue {
+                pendingUndo.append {
+                    if let moved = planner.findTask(task.title) { _ = planner.reschedule(moved, to: oldDue) }
+                }
+            }
             return ("Moved \(task.title) to \(dayWord(due)) at \(TimeText.time(due)).",
                     ActionCard(kind: .reminder, heading: "Reminder moved", title: task.title,
                                detail: "\(CommandParser.capitalizeFirst(dayWord(due))), \(TimeText.time(due))",
                                undo: nil, canEdit: true))
         case "deletealarm":
-            guard let alarms = alarms else { return nil }
-            let time = (json["time"] as? String) ?? "all"
-            if time == "all" {
-                let n = alarms.removeAlarms(hour: nil, minute: nil)
-                return (n == 0 ? "There are no alarms to delete." : "Deleted \(n == 1 ? "the alarm" : "all \(n) alarms").", nil)
+            let time = CommandStore.value(json["time"])
+            if time.isEmpty || time == "all" {
+                return perform(.deleteAlarm(hour: nil, minute: nil, meridiem: nil, all: true))
             }
             let parts = time.split(separator: ":").compactMap { Int($0) }
             guard parts.count >= 2 else { return nil }
-            let n = alarms.removeAlarms(hour: parts[0], minute: parts[1])
-            let label = Alarm(hour: parts[0], minute: parts[1]).timeText
-            return (n == 0 ? "I couldn't find an alarm at \(label)." : "Deleted the \(label) alarm.", nil)
+            return perform(.deleteAlarm(hour: parts[0], minute: parts[1], meridiem: nil, all: false))
         case "canceltimer":
             return perform(.cancelTimer)
         case "stopfocus":
@@ -418,15 +790,6 @@ final class AssistantService: ObservableObject {
             guard let raw = json["style"] as? String, let style = AppStyle(rawValue: raw.lowercased()) else { return nil }
             app?.style = style
             return ("Switched to \(style.displayName).", nil)
-        case "remember":
-            let fact = (json["fact"] as? String) ?? ""
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.ai?.loadMemories() }
-            return ("Got it, I'll remember that.",
-                    ActionCard(kind: .info, heading: "Remembered", title: fact, detail: "Stored on your PC",
-                               undo: nil, canEdit: false))
-        case "forget":
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.ai?.loadMemories() }
-            return ("Okay, I've forgotten that.", nil)
         default:
             return nil
         }
@@ -559,12 +922,32 @@ final class AssistantService: ObservableObject {
         let now = Date()
         var context = ["date": DateText.long(now), "time": TimeText.time(now)]
         if let w = weather?.snapshot {
+            if let place = UserDefaults.standard.string(forKey: "location.place") { context["location"] = place }
             context["weather"] = "\(Int(w.temperature.rounded())) degrees, \(WeatherCode.text(w.code).lowercased()), high \(Int(w.high.rounded())), low \(Int(w.low.rounded()))"
         }
         let iso = DateFormatter()
         iso.locale = Locale(identifier: "en_US_POSIX")
         iso.dateFormat = "yyyy-MM-dd'T'HH:mm"
         context["now"] = iso.string(from: now)
+        if let app = app {
+            var screen = app.screen.title
+            if app.screen == .focus, let focus = focus {
+                screen += " (focus \(focus.state == .running ? "running" : "not running"), \(Int(focus.focusLength / 60)) min sessions)"
+            }
+            context["screen"] = screen
+        }
+        if let control = control {
+            context["settings"] = control.summary
+            context["sounds"] = control.soundNames
+            let habitNames = (control.habits?.habits ?? []).map { $0.name }
+            if !habitNames.isEmpty { context["habits"] = habitNames.joined(separator: ", ") }
+        }
+        if let commands = commands {
+            if !commands.memory.isEmpty { context["memory"] = commands.memory.joined(separator: " | ") }
+            let mine = commands.routines.filter { $0.enabled }
+                .map { "\($0.name) (say: \($0.phrases.joined(separator: " / ")))" }
+            if !mine.isEmpty { context["my commands"] = mine.joined(separator: "; ") }
+        }
         if ai?.shareDay ?? false, let planner = planner {
             let events = planner.events.filter { $0.isAllDay || $0.end > now }.prefix(6)
                 .map { $0.isAllDay ? "\($0.title) (all day)" : "\($0.title) at \(TimeText.time($0.start))" }
@@ -684,6 +1067,50 @@ final class AssistantService: ObservableObject {
         case .tasks:
             return tasksReply()
 
+        case .completeTask(let name):
+            guard let planner = planner, planner.remindersAccess == .granted else {
+                return ("I can't see your tasks. Allow Reminders access in Settings.", nil)
+            }
+            guard let task = planner.findTask(name) else { return ("I couldn't find a task called \(name).", nil) }
+            if task.isCompleted { return ("\(task.title) is already done.", nil) }
+            planner.setCompleted(task, true)
+            pendingUndo.append { planner.setCompleted(task, false) }
+            let left = planner.tasks.filter { !$0.isCompleted }.count
+            return ("Ticked off \(task.title).\(left == 0 ? " That's everything!" : "")",
+                    ActionCard(kind: .task, heading: "Task done", title: task.title,
+                               detail: left == 0 ? "All done" : "\(left) left", undo: nil, canEdit: true))
+
+        case .deleteTask(let name):
+            guard let planner = planner, planner.remindersAccess == .granted else {
+                return ("I can't see your tasks. Allow Reminders access in Settings.", nil)
+            }
+            guard let task = planner.findTask(name) else { return ("I couldn't find a task called \(name).", nil) }
+            planner.deleteReminder(id: task.id)
+            let title = task.title
+            let due = task.hasDueTime ? task.dueDate : nil
+            pendingUndo.append { _ = planner.addReminder(title: title, due: due, byVoice: true) }
+            return ("Deleted \(task.title).",
+                    ActionCard(kind: .task, heading: "Task deleted", title: task.title,
+                               detail: planner.selectedListTitle, undo: nil, canEdit: false))
+
+        case .deleteAlarm(let hour, let minute, let meridiem, let all):
+            let before = alarms?.alarms ?? []
+            let reply = deleteAlarmsReply(hour: hour, minute: minute, meridiem: meridiem, all: all)
+            if let alarms = alarms {
+                let removed = before.filter { old in !alarms.alarms.contains { $0.id == old.id } }
+                if !removed.isEmpty { pendingUndo.append { alarms.alarms.append(contentsOf: removed) } }
+            }
+            return reply
+
+        case .setStyle(let raw):
+            guard let style = AppStyle(rawValue: raw) else { return ("Sorry, I don't know that style.", nil) }
+            if let app = app {
+                let old = app.style
+                pendingUndo.append { app.style = old }
+            }
+            app?.style = style
+            return ("Switched to \(style.displayName).", nil)
+
         case .needsTime(let kind):
             if kind == "timer" {
                 pendingPrefix = "set a timer for"
@@ -695,6 +1122,41 @@ final class AssistantService: ObservableObject {
         case .unknown:
             return ("Sorry, I didn't understand.", nil)
         }
+    }
+
+    private func deleteAlarmsReply(hour: Int?, minute: Int?, meridiem: String?, all: Bool) -> (text: String, card: ActionCard?) {
+            guard let alarms = alarms else { return ("Alarms aren't available.", nil) }
+            if alarms.alarms.isEmpty { return ("You don't have any alarms.", nil) }
+            if all {
+                let n = alarms.removeAlarms(hour: nil, minute: nil)
+                return (n == 1 ? "Deleted your alarm." : "Deleted all \(n) alarms.", nil)
+            }
+            guard let hour = hour, let minute = minute else {
+                if alarms.alarms.count == 1, let only = alarms.alarms.first {
+                    let label = only.timeText
+                    alarms.removeAlarms(hour: only.hour, minute: only.minute)
+                    return ("Deleted the \(label) alarm.", nil)
+                }
+                let times = alarms.alarms.map { $0.timeText }
+                pendingPrefix = "delete the alarm at"
+                return ("Which one? You have alarms at \(times.dropLast().joined(separator: ", ")) and \(times.last ?? "").", nil)
+            }
+            // "4:30" matches a 4:30 AM or 4:30 PM alarm unless am/pm was said.
+            let matching = alarms.alarms.filter { alarm in
+                guard alarm.minute == minute else { return false }
+                switch meridiem {
+                case "am"?: return alarm.hour == hour % 12
+                case "pm"?: return alarm.hour == hour % 12 + 12
+                default: return alarm.hour == hour || (hour <= 12 && alarm.hour % 12 == hour % 12)
+                }
+            }
+            guard !matching.isEmpty else {
+                let label = Alarm(hour: hour, minute: minute).timeText
+                return ("I couldn't find an alarm at \(label).", nil)
+            }
+            let label = matching[0].timeText
+            for alarm in matching { alarms.removeAlarms(hour: alarm.hour, minute: alarm.minute) }
+            return ("Deleted the \(label) alarm.", nil)
     }
 
     private func tasksReply() -> (text: String, card: ActionCard?) {
@@ -720,11 +1182,21 @@ final class AssistantService: ObservableObject {
         if planner.calendarAccess == .denied { return ("I can't see your calendar. Allow access in Settings.", nil) }
         let calendar = Calendar.current
         let day = calendar.date(byAdding: .day, value: offset, to: Date()) ?? Date()
-        let dayName = offset == 0 ? "today" : "tomorrow"
+        let dayName: String = {
+            switch offset {
+            case 0: return "today"
+            case 1: return "tomorrow"
+            case 2...6:
+                let f = DateFormatter()
+                f.dateFormat = "EEEE"
+                return "on " + f.string(from: day)
+            default: return "on " + DateText.long(day)
+            }
+        }()
         var events = planner.events(on: day)
         if offset == 0 { events = events.filter { $0.isAllDay || $0.end > Date() } }
         guard !events.isEmpty else {
-            return (offset == 0 ? "Nothing else on your calendar today." : "Your calendar is clear tomorrow.",
+            return (offset == 0 ? "Nothing else on your calendar today." : "Your calendar is clear \(dayName).",
                     ActionCard(kind: .calendar, heading: CommandParser.capitalizeFirst(dayName), title: "No events",
                                detail: "Your calendar is clear", undo: nil, canEdit: false))
         }
@@ -739,7 +1211,7 @@ final class AssistantService: ObservableObject {
         }
         let count = events.count == 1 ? "1 event" : "\(events.count) events"
         let first = events[0]
-        return ("You have \(count) \(offset == 0 ? "left today" : "tomorrow"): \(list).",
+        return ("You have \(count) \(offset == 0 ? "left today" : dayName): \(list).",
                 ActionCard(kind: .calendar, heading: "\(CommandParser.capitalizeFirst(dayName)) · \(count)", title: first.title,
                            detail: first.isAllDay ? "All day" : "\(TimeText.time(first.start)) – \(TimeText.time(first.end))",
                            undo: nil, canEdit: true))
@@ -788,6 +1260,9 @@ final class AssistantService: ObservableObject {
             timer?.cancel()
         case .focus:
             focus?.reset()
+        case .custom(let id):
+            undoBlocks[id]?()
+            undoBlocks[id] = nil
         }
         undone = true
         Haptics.tap()
@@ -803,6 +1278,9 @@ final class AssistantService: ObservableObject {
             app?.screen = .settings
         case .reminder, .task, .calendar:
             app?.screen = .today
+        case .info where card.heading.hasPrefix("Command") || card.heading == "Your command":
+            app?.pendingSettingsSection = "commands"
+            app?.screen = .settings
         default:
             break
         }
@@ -811,6 +1289,8 @@ final class AssistantService: ObservableObject {
     func clearHistory() {
         messages = []
         card = nil
+        confirmation = nil
+        pendingRun = nil
         phase = .idle
         UserDefaults.standard.removeObject(forKey: Self.historyKey)
         ai?.reset()                                   // fresh conversation on the PC too

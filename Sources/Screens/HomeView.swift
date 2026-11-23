@@ -192,7 +192,7 @@ private struct WeatherCard: View {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text("My Location")
+                        Text(location.displayName)
                             .font(.system(size: 15, weight: .bold))
                             .lineLimit(1)
                         Image(systemName: "location.fill")
@@ -249,7 +249,7 @@ private struct WeatherCard: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
-                Text("My Location")
+                Text(location.displayName)
                     .font(.system(size: 15, weight: .bold))
                 Image(systemName: "location.fill")
                     .font(.system(size: 10, weight: .bold))

@@ -443,7 +443,9 @@ private struct AnswerView: View {
 
     private var side: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let card = assistant.card {
+            if let prompt = assistant.confirmation {
+                ConfirmCard(prompt: prompt)
+            } else if let card = assistant.card {
                 ResultCard(card: card)
             }
             Text(footnote)
@@ -481,6 +483,57 @@ private struct AnswerView: View {
         default:
             return "Handled on this iPhone in \(seconds) s. General questions go to the AI on your PC."
         }
+    }
+}
+
+/// "Delete all 3 alarms?": answer with the buttons, by voice (yes / no) or by waving over the sensor.
+private struct ConfirmCard: View {
+    let prompt: String
+    @EnvironmentObject private var assistant: AssistantService
+    @Environment(\.theme) private var theme
+
+    init(prompt: String) { self.prompt = prompt }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(theme.orange)
+                Text("Please confirm")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(theme.secondaryLabel)
+            }
+            Text(prompt)
+                .font(.system(size: 17, weight: .bold))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button { assistant.declinePending() } label: {
+                    Text("No")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(theme.label)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(RoundedRectangle(cornerRadius: theme.controlRadius, style: .continuous)
+                                        .fill(theme.fill))
+                }
+                .buttonStyle(.plain)
+                Button { assistant.confirmPending() } label: {
+                    Text("Yes")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(RoundedRectangle(cornerRadius: theme.controlRadius, style: .continuous)
+                                        .fill(theme.red))
+                }
+                .buttonStyle(.plain)
+            }
+            Text("Or say yes or no, or wave over the top of the phone.")
+                .font(.system(size: 13))
+                .foregroundColor(theme.secondaryLabel)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .card()
     }
 }
 

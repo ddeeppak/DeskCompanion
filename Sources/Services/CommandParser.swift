@@ -15,6 +15,14 @@ enum VoiceIntent: Equatable {
     case stopFocus
     case help
     case tasks
+    /// "tick off call mom", "the bank is done" (matched to a real task by name later)
+    case completeTask(String)
+    /// "remove the bank", "delete the dentist reminder"
+    case deleteTask(String)
+    /// "delete my 4:30 alarm" (hour/minute nil = the only one, or ask), all = every alarm
+    case deleteAlarm(hour: Int?, minute: Int?, meridiem: String?, all: Bool)
+    /// "switch to warm style" (calm, futuristic or warm)
+    case setStyle(String)
     /// Alarm or timer asked without a time ("set an alarm"): ask for it, then listen.
     case needsTime(kind: String)
     case unknown
@@ -31,6 +39,7 @@ enum CommandParser {
         if contains(t, ["cancel the timer", "cancel timer", "stop the timer", "stop timer", "delete the timer"]) {
             return .cancelTimer
         }
+        if let edit = editCommand(t) { return edit }
         if t.contains("timer") || t.hasPrefix("count down") {
             let seconds = durationSeconds(t)
             return seconds > 0 ? .timer(seconds: seconds) : .needsTime(kind: "timer")
@@ -65,8 +74,17 @@ enum CommandParser {
         if contains(t, ["weather", "temperature", "rain", "umbrella", "how hot", "how cold", "forecast", "sunny"]) {
             return .weather(dayOffset: tomorrow ? 1 : 0, rainQuestion: contains(t, ["rain", "umbrella"]))
         }
+        let day = dayReference(t, now: now)
         if contains(t, ["what's on", "what is on", "schedule", "calendar", "agenda", "events", "meetings", "my day", "plans", "anything on"]) {
-            return .agenda(dayOffset: tomorrow ? 1 : 0)
+            return .agenda(dayOffset: day?.offset ?? (tomorrow ? 1 : 0))
+        }
+        if let day = day {
+            // "anything on December 25?", "do I have something on Thursday", or just "on Thursday"
+            let words = t.split(separator: " ").count
+            if contains(t, ["anything", "something", "do i have", "is there", "holiday", "busy", "free", "what about", "how about"])
+                || words <= 4 {
+                return .agenda(dayOffset: day.offset)
+            }
         }
         if contains(t, ["what time", "the time", "time is it"]) { return .time }
         if contains(t, ["what day", "the date", "what's the date", "today's date", "which day"]) { return .date }
@@ -224,18 +242,20 @@ enum CommandParser {
     private static func reminder(_ t: String, now: Date) -> VoiceIntent {
         var text = t
         var due: Date? = nil
-        let dayOffset = text.contains("tomorrow") ? 1 : 0
+        let named = dayReference(text, now: now)
+        let dayOffset = named?.offset ?? (text.contains("tomorrow") ? 1 : 0)
+        if let named = named { text.removeSubrange(named.range) }
         let tonight = text.contains("tonight")
 
         if let clock = clockTime(text) {
             due = resolve(clock, dayOffset: dayOffset, tonight: tonight, preferMorning: false, now: now)
             text.removeSubrange(clock.range)
-        } else if let found = firstMatch(#"\bin\s+(\d+|an|a|half an)\s*(hours?|hrs?|minutes?|mins?)\b"#, in: text) {
+        } else if let found = firstMatch(#"\b(?:in|within|after)\s+(\d+|an|a|one|half an)\s*(hours?|hrs?|minutes?|mins?)\b"#, in: text) {
             let groups = found.0
             let range = found.1
             let amount: Int
             switch groups[1] {
-            case "an", "a": amount = 1
+            case "an", "a", "one": amount = 1
             case "half an": amount = 0
             default: amount = Int(groups[1]) ?? 0
             }
@@ -243,10 +263,10 @@ enum CommandParser {
             let seconds = groups[1] == "half an" ? 1800 : amount * (isHours ? 3600 : 60)
             if seconds > 0 { due = now.addingTimeInterval(TimeInterval(seconds)) }
             text.removeSubrange(range)
-        } else if dayOffset == 1 {
-            // "remind me tomorrow to …" without a time: 9 AM tomorrow.
+        } else if dayOffset >= 1 {
+            // "remind me tomorrow / on Friday to …" without a time: 9 AM that day.
             due = resolve(ClockTime(hour: 9, minute: 0, meridiem: "am", range: text.startIndex..<text.startIndex),
-                          dayOffset: 1, tonight: false, preferMorning: true, now: now)
+                          dayOffset: dayOffset, tonight: false, preferMorning: true, now: now)
         }
 
         for phrase in ["set a reminder", "create a reminder", "add a reminder", "set reminder", "remind me", "reminder",
@@ -254,7 +274,9 @@ enum CommandParser {
             text = text.replacingOccurrences(of: phrase, with: " ")
         }
         var title = text.split(separator: " ").joined(separator: " ")
-        for lead in ["to ", "that ", "about ", "for ", "i need to ", "i have to "] where title.hasPrefix(lead) {
+        for lead in ["to ", "that ", "about ", "for ", "i need to ", "i have to ", "i'm going to ", "i am going to ",
+                     "im going to ", "i want to ", "i should ", "i must ", "i will ", "i'll ", "i've got to ",
+                     "i gotta ", "we need to ", "go to "] where title.hasPrefix(lead) {
             title = String(title.dropFirst(lead.count))
         }
         for tail in [" to", " at", " in", " for"] where title.hasSuffix(tail) {
@@ -272,6 +294,115 @@ enum CommandParser {
         }
         if let found = firstMatch(#"^(?:please\s+)?(?:add|new task|create a task|add a task)\s+(.+)$"#, in: t) {
             return capitalizeFirst(found.0[1])
+        }
+        return nil
+    }
+
+    // MARK: - Changing things ("remove the bank", "tick off call mom", "delete my 4:30 alarm", "warm style")
+
+    private static let polite = #"^(?:please\s+|okay\s+|ok\s+|now\s+|and\s+|also\s+)*(?:can you\s+|could you\s+|would you\s+|will you\s+|i want to\s+|i'd like to\s+|let's\s+|lets\s+)?"#
+
+    private static func editCommand(_ t: String) -> VoiceIntent? {
+        // Style
+        if let found = firstMatch(polite + #"(?:switch|change|set|use|go|turn|make it|make)\b.*?\b(calm|minimal|futuristic|future|warm|cozy|cosy)\b"#, in: t),
+           contains(t, ["style", "look", "theme", "mode", "make it", "design"]) {
+            switch found.0[1] {
+            case "calm", "minimal": return .setStyle("calm")
+            case "futuristic", "future": return .setStyle("futuristic")
+            default: return .setStyle("warm")
+            }
+        }
+        // Delete alarms (before "alarm" creates one)
+        if t.contains("alarm"),
+           firstMatch(polite + #"(?:delete|remove|cancel|clear|turn off|switch off|disable|get rid of|drop)\b"#, in: t) != nil {
+            let all = contains(t, ["all", "every", "alarms"])
+            let clock = clockTime(t) ?? bareTime(t)
+            return .deleteAlarm(hour: all ? nil : clock?.hour, minute: all ? nil : clock?.minute,
+                                meridiem: all ? nil : clock?.meridiem, all: all)
+        }
+        // Complete
+        var target: String? = nil
+        var complete = false
+        if let found = firstMatch(polite + #"(?:tick off|tick|check off|cross off|complete|finish|i finished|i've finished|i have finished|i completed|i've completed|i have completed|i did|i've done|i have done|done with|i'm done with|im done with)\s+(.+?)(?:\s+(?:as\s+)?(?:done|complete|completed|finished))?(?:\s+off)?$"#, in: t) {
+            target = found.0[1]; complete = true
+        } else if let found = firstMatch(polite + #"mark\s+(.+?)\s+(?:as\s+)?(?:done|complete|completed|finished)$"#, in: t) {
+            target = found.0[1]; complete = true
+        } else if let found = firstMatch(#"^(?:the\s+|my\s+)?(.+?)\s+(?:is|are|was)\s+(?:done|finished|complete|completed)$"#, in: t) {
+            target = found.0[1]; complete = true
+        } else if let found = firstMatch(polite + #"(?:remove|delete|drop|erase|scratch|get rid of|cancel)\s+(.+?)(?:\s+(?:from|off)\s+(?:my|the)\s+(?:[a-z]+\s+)?(?:list|tasks|reminders))?$"#, in: t) {
+            target = found.0[1]
+        } else if let found = firstMatch(polite + #"take\s+(.+?)\s+off\s+(?:my|the)\s+(?:[a-z]+\s+)?(?:list|tasks|reminders)$"#, in: t) {
+            target = found.0[1]
+        }
+        guard var name = target else { return nil }
+        if contains(name, ["timer"]) { return complete ? nil : .cancelTimer }
+        if contains(name, ["focus", "pomodoro"]) { return complete ? nil : .stopFocus }
+        for lead in ["the ", "my ", "that ", "this ", "a ", "an ", "task ", "reminder ", "item "] where name.hasPrefix(lead) {
+            name = String(name.dropFirst(lead.count))
+        }
+        for tail in [" task", " reminder", " item", " one", " off", " from my list", " from the list", " please"] where name.hasSuffix(tail) {
+            name = String(name.dropLast(tail.count))
+        }
+        name = name.trimmingCharacters(in: .whitespaces)
+        // Vague ("remove it", "delete everything"): let the AI work out what you mean.
+        if name.isEmpty || ["it", "that", "this", "them", "everything", "all", "all of them", "the last one"].contains(name) {
+            return nil
+        }
+        return complete ? .completeTask(name) : .deleteTask(name)
+    }
+
+    /// True for sentences that clearly start a command, even as an answer to the AI's question.
+    static func isExplicitCommand(_ raw: String) -> Bool {
+        let t = normalize(raw)
+        let verbs = ["set ", "start ", "stop ", "cancel ", "remind ", "add ", "put ", "delete ", "remove ", "tick ",
+                     "mark ", "switch ", "change ", "wake me", "begin ", "turn ", "create ", "new task", "check off",
+                     "cross off", "what's on", "what is on", "what's the weather", "what time"]
+        let body = t.replacingOccurrences(of: #"^(?:please|okay|ok|now|and|also)\s+"#, with: "", options: .regularExpression)
+        return verbs.contains { body.hasPrefix($0) }
+    }
+
+    // MARK: - Days ("on Thursday", "next Monday", "December 25", "25th of December", "day after tomorrow")
+
+    private static let weekdays = ["sunday": 1, "monday": 2, "tuesday": 3, "wednesday": 4, "thursday": 5, "friday": 6, "saturday": 7]
+    private static let months = ["january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3, "april": 4, "apr": 4,
+                                 "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7, "august": 8, "aug": 8,
+                                 "september": 9, "sep": 9, "sept": 9, "october": 10, "oct": 10, "november": 11, "nov": 11,
+                                 "december": 12, "dec": 12]
+
+    /// Days from today to a named day in the sentence, plus where it was said (so reminders can remove it).
+    static func dayReference(_ t: String, now: Date) -> (offset: Int, range: Range<String.Index>)? {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        func days(to date: Date) -> Int {
+            calendar.dateComponents([.day], from: today, to: calendar.startOfDay(for: date)).day ?? 0
+        }
+        if let range = t.range(of: "day after tomorrow") { return (2, range) }
+
+        let monthNames = months.keys.sorted { $0.count > $1.count }.joined(separator: "|")
+        let patterns = [
+            #"\b(?:on\s+)?(?:the\s+)?("# + monthNames + #")\s+(\d{1,2})(?:st|nd|rd|th)?\b"#,
+            #"\b(?:on\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?("# + monthNames + #")\b"#
+        ]
+        for (index, pattern) in patterns.enumerated() {
+            guard let found = firstMatch(pattern, in: t) else { continue }
+            let monthText = index == 0 ? found.0[1] : found.0[2]
+            let dayText = index == 0 ? found.0[2] : found.0[1]
+            guard let month = months[monthText], let dayNumber = Int(dayText), (1...31).contains(dayNumber) else { continue }
+            var parts = calendar.dateComponents([.year], from: now)
+            parts.month = month
+            parts.day = dayNumber
+            guard var date = calendar.date(from: parts) else { continue }
+            if date < today, let next = calendar.date(byAdding: .year, value: 1, to: date) { date = next }
+            return (days(to: date), found.1)
+        }
+
+        let dayNames = weekdays.keys.joined(separator: "|")
+        if let found = firstMatch(#"\b(?:on\s+)?(next|this|coming)?\s*("# + dayNames + #")\b"#, in: t),
+           let weekday = weekdays[found.0[2]] {
+            let current = calendar.component(.weekday, from: now)
+            var ahead = (weekday - current + 7) % 7
+            if found.0[1] == "next" && ahead == 0 { ahead = 7 }
+            return (ahead, found.1)
         }
         return nil
     }

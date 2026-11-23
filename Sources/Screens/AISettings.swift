@@ -3,6 +3,7 @@ import SwiftUI
 /// Settings → AI & Network: the Desk Bridge on your PC (found automatically), pairing code, model, speed, test.
 struct AISettings: View {
     @EnvironmentObject private var ai: AIService
+    @EnvironmentObject private var commands: CommandStore
     @EnvironmentObject private var voice: VoiceService
     @Environment(\.theme) private var theme
     @State private var testing = false
@@ -21,7 +22,6 @@ struct AISettings: View {
         .onAppear {
             ai.startDiscovery()
             ai.check()
-            ai.loadMemories()
         }
     }
 
@@ -140,20 +140,23 @@ struct AISettings: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel("Memory")
             VStack(spacing: 0) {
-                if ai.memories.isEmpty {
+                if commands.memory.isEmpty {
                     SettingsRow {
                         Image(systemName: "brain.head.profile").foregroundColor(theme.accent2).frame(width: 24)
-                        Text(ai.state == .online ? "Nothing remembered yet" : "Connect to see what the AI remembers")
+                        Text("Nothing remembered yet")
                             .foregroundColor(theme.secondaryLabel)
                         Spacer(minLength: 0)
                     }
                 } else {
-                    ForEach(ai.memories, id: \.self) { fact in
+                    ForEach(commands.memory, id: \.self) { fact in
                         SettingsRow {
                             Image(systemName: "brain.head.profile").foregroundColor(theme.accent2).frame(width: 24)
                             Text(fact).lineLimit(2)
                             Spacer(minLength: 8)
-                            Button { ai.removeMemory(fact) } label: {
+                            Button {
+                                commands.forgetExact(fact)
+                                ai.backupMemories(commands.memory)
+                            } label: {
                                 Image(systemName: "minus.circle.fill")
                                     .font(.system(size: 22))
                                     .foregroundColor(theme.red)
@@ -164,7 +167,10 @@ struct AISettings: View {
                         }
                         RowSeparator()
                     }
-                    Button { ai.clearMemories() } label: {
+                    Button {
+                        commands.clearMemory()
+                        ai.backupMemories([])
+                    } label: {
                         SettingsRow {
                             Text("Forget everything").foregroundColor(theme.red)
                             Spacer(minLength: 0)
@@ -175,7 +181,7 @@ struct AISettings: View {
                 }
             }
             .groupedBox()
-            footnote("Say \"remember that…\" to add, \"forget…\" to remove, or \"what do you know about me?\". Stored only on your PC, in bridge/memory.local.json.")
+            footnote("Say \"remember that…\" to add, \"forget…\" to remove, or \"what do you know about me?\". Stored on this iPhone and backed up to your PC (bridge/memory.local.json).")
         }
     }
 

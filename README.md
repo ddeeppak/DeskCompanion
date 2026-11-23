@@ -26,4 +26,6 @@ Design: `../design/claude-design-v1/` · Plan: `../desk-companion-backlog.md`
 - [x] Step 6: Local AI on PC: Desk Bridge (Claude Code, Haiku, low effort, warm streaming session), auto-discovery, pairing code
 - [x] Step 7: Sensors: Away mode (front camera, on-device), wave to talk/brighten (proximity), noise meter
 - [x] 0.8: Smart assistant: AI lookups (calendar any day, tasks, alarms, weather, focus) + edit actions, long-term memory on the PC, morning/evening briefings and event heads-ups, conversation mode
+- [x] 0.8.1–0.8.2: better listening (server speech recognition, hints), conversation endings, natural commands (remove / tick off / any day's calendar), town name on Home
+- [x] 0.9: full voice control of every setting and screen, AI-first understanding with phone fallback, your own commands (by voice or Settings → Commands, with time / sit-down triggers), learned phrases, memory on the iPhone (PC backup), yes/no confirmation (voice, buttons or wave), Undo for every change
 - [ ] Step 8: Polish

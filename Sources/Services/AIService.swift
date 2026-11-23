@@ -156,7 +156,12 @@ final class AIService: ObservableObject {
     }
 
     private func setState(_ newState: State) {
+        let wasOnline = state == .online
         state = newState
+        // First connection this launch: fetch the PC's memory (the iPhone imports it once).
+        if newState == .online, !wasOnline, !UserDefaults.standard.bool(forKey: "memory.importedFromPC") {
+            loadMemories()
+        }
         switch newState {
         case .online: app?.aiStatus = .online
         case .offline, .wrongCode: app?.aiStatus = isConfigured ? .offline : .notSetUp
@@ -233,6 +238,13 @@ final class AIService: ObservableObject {
     // MARK: Long-term memory (stored on the PC)
 
     @Published private(set) var memories: [String] = []
+    /// Called with the PC's facts when they're loaded (the iPhone takes them over the first time).
+    var onMemories: (([String]) -> Void)? = nil
+
+    /// The iPhone owns memory now: send the whole list to the PC as a backup.
+    func backupMemories(_ facts: [String]) {
+        memoryRequest(method: "POST", body: ["replace": facts])
+    }
 
     func loadMemories() {
         memoryRequest(method: "GET", body: nil)
@@ -259,7 +271,10 @@ final class AIService: ObservableObject {
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let facts = json["facts"] as? [String] else { return }
-            DispatchQueue.main.async { self?.memories = facts }
+            DispatchQueue.main.async {
+                self?.memories = facts
+                self?.onMemories?(facts)
+            }
         }.resume()
     }
 

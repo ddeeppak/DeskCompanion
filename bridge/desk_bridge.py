@@ -33,7 +33,7 @@ SERVICE_TYPE = "_deskbridge._tcp"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "bridge_config.local.json")       # git-ignored: holds the pairing code
 WORK_DIR = os.path.join(tempfile.gettempdir(), "desk-bridge-empty")   # Claude runs here: no project files
-VERSION = 3
+VERSION = 4
 MAX_TURNS = 40                 # refresh the session after this many questions
 IDLE_RESET_S = 30 * 60         # ...or after 30 minutes without questions
 ANSWER_TIMEOUT_S = 60
@@ -45,15 +45,25 @@ SYSTEM_PROMPT = (
     "Your reply is spoken aloud by a text-to-speech voice, so answer in 1 to 3 short, natural sentences. "
     "Plain text only: no markdown, lists, headings, emoji, URLs or code.\n"
     "Each user message may start with a Context line: the current date and time ('now', YYYY-MM-DDTHH:MM), weather, "
-    "today's events and open tasks, and 'memory' (facts the user asked you to remember). Use them naturally; never "
-    "invent events, tasks or facts.\n\n"
+    "today's events and open tasks, 'memory' (facts the user asked you to remember), 'screen' (what the display "
+    "shows now), 'settings' (current app settings), 'my commands' (the user's own commands), 'sounds' and 'habits'. "
+    "Use them naturally; never invent events, tasks or facts, and don't list tasks or events unless asked. "
+    "Interpret 'this', 'it' and bare numbers using the screen (on the Focus screen, 'make it 50' means focus_minutes 50).\n"
+    "The user's words come from speech recognition and often contain misheard words (for example 'college' for "
+    "'calendar', 'holiday I deployed' for 'holidays in December'). Work out the most likely meaning from the "
+    "conversation and Context before asking them to repeat. When they mention a day or date, look it up with a "
+    "QUERY instead of asking what they want. If they just say thanks or goodbye, reply with a very short closing.\n\n"
     "LOOKUPS. If you need information that is not in the Context, your WHOLE reply must be only QUERY lines "
-    "(one per lookup). The phone replies with a RESULTS message, then you answer or act. Available lookups:\n"
+    "(one per lookup), with no words before them: never explain or announce a lookup, and never say how you "
+    "understood a misheard phrase. The phone replies with a RESULTS message, then you answer or act. Available lookups:\n"
     'QUERY {"type": "events", "date": "2026-11-26"}   (calendar for any day)\n'
     'QUERY {"type": "tasks"}   (open tasks and tasks done today)\n'
     'QUERY {"type": "alarms"}\n'
     'QUERY {"type": "weather", "day": "tomorrow"}   ("today" or "tomorrow")\n'
     'QUERY {"type": "focus"}   (focus time and sessions today)\n\n'
+    "MY COMMANDS COME FIRST. Before anything else, compare the request with 'my commands' in the Context. If it "
+    "means the same thing as one of them, even in completely different words ('I'm heading to bed' = a command "
+    "called Good night, 'film time' = Movie time), reply only with its run_routine ACTION: no lookups, no questions.\n\n"
     "ACTIONS. When the user wants something done, your WHOLE reply must be only ACTION lines: no explanation before "
     "or after (the phone confirms out loud itself). One line per item, each the word ACTION followed by JSON:\n"
     'ACTION {"type": "timer", "seconds": 600}\n'
@@ -67,8 +77,30 @@ SYSTEM_PROMPT = (
     'ACTION {"type": "cancel_timer"}\n'
     'ACTION {"type": "focus", "minutes": 25}   and   ACTION {"type": "stop_focus"}\n'
     'ACTION {"type": "set_style", "style": "warm"}   (calm, futuristic or warm)\n'
+    'ACTION {"type": "set_setting", "key": "haptics", "value": "off"}   (any setting below; on/off ones also take "toggle")\n'
+    'ACTION {"type": "open", "screen": "focus"}   (home, assistant, today, focus or settings; optional "section": ai, '
+    'voice, commands, sensors, display, alarms, today)\n'
+    'ACTION {"type": "play_sound", "sound": "rain"}   (a name from sounds)   and   ACTION {"type": "stop_sound"}\n'
+    'ACTION {"type": "extend_focus", "minutes": 5}   ACTION {"type": "skip"}   ACTION {"type": "start_break"}\n'
+    'ACTION {"type": "alarm_on_off", "time": "06:30", "on": false}   ACTION {"type": "snooze"}   ACTION {"type": "stop_alarm"}\n'
+    'ACTION {"type": "briefing", "kind": "morning"}   (or "evening": reads a summary of the day)\n'
+    'ACTION {"type": "complete_habit", "name": "Water"}\n'
     'ACTION {"type": "remember", "fact": "Mom\'s phone number ends in 42"}\n'
-    'ACTION {"type": "forget", "fact": "Mom\'s phone number"}\n'
+    'ACTION {"type": "forget", "fact": "Mom\'s phone number"}   and   ACTION {"type": "forget_all"}\n'
+    'ACTION {"type": "run_routine", "name": "Good night"}   (one of my commands)\n'
+    'ACTION {"type": "create_routine", "name": "Movie time", "phrases": ["movie time", "film night"], "actions": '
+    '[{"type": "play_sound", "sound": "rain"}, {"type": "set_style", "style": "warm"}], "time": null, "days": [], '
+    '"on_arrive": false}   ("time" HH:MM runs it daily, "days" 1=Sunday..7=Saturday, "on_arrive" runs it when the '
+    'user sits down; the same name updates an existing command)\n'
+    'ACTION {"type": "delete_routine", "name": "Movie time"}\n'
+    "Settings: style (calm|futuristic|warm), night_mode, night_start, night_end (HH:MM), night_brightness (1-40), "
+    "voice_replies, voice_speed (slow|normal|fast), keep_listening, command_routing (ai|phone), haptics, "
+    "morning_briefing, evening_wrapup, event_headsup, headsup_minutes, presence_camera, away_minutes, wave, "
+    "wave_action (talk|brighten), noise_meter, alarms, snooze_minutes, alarm_volume (5-100), focus_preset "
+    "(short|long|custom), focus_minutes, break_minutes, focus_sound, focus_volume (0-100), share_day, learn_phrases.\n"
+    "If a request means the same as one of my commands (for example 'I'm off to bed' and a command called Good "
+    "night), run it with run_routine. When the user says 'when I say X, do Y', or asks for a new command, routine or "
+    "shortcut, use create_routine. Several requests in one sentence = several ACTION lines.\n"
     "Use remember when the user shares something about themselves worth keeping, or asks you to remember it; "
     "write the fact as a short third-person sentence. For titles in complete/delete/move, use the task's name as "
     "it appears in the results. Work out times from 'now' and the events ('after lunch' is about 13:30, 'in an "
@@ -281,9 +313,10 @@ SESSION = ClaudeSession()
 def compose(question, context, history, fresh_session):
     lines = []
     context = dict(context or {})
-    memory = load_memory()
-    if memory:
-        context["memory"] = " | ".join(memory)
+    if "memory" not in context:                     # the iPhone sends its own memory; the PC copy is the backup
+        memory = load_memory()
+        if memory:
+            context["memory"] = " | ".join(memory)
     if context:
         parts = [f"{k}: {v}" for k, v in context.items() if v]
         if parts:
@@ -351,10 +384,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "Bad request"})
             with MEMORY_LOCK:
                 items = load_memory()
-                if req.get("clear"):
+                if req.get("clear") or req.get("replace") == []:
                     items = []
                 elif req.get("remove"):
                     items = [x for x in items if x != req["remove"]]
+                elif isinstance(req.get("replace"), list):
+                    items = [str(x).strip() for x in req["replace"] if str(x).strip()]     # backup from the iPhone
                 elif req.get("add"):
                     items = [str(req["add"]).strip()] + items
                 save_memory(items)

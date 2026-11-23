@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case ai, voice, sensors, display, alarms, today, privacy, about
+    case ai, voice, commands, sensors, display, alarms, today, privacy, about
 
     var id: String { rawValue }
 
@@ -9,6 +9,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .ai: return "AI & Network"
         case .voice: return "Voice"
+        case .commands: return "Commands"
         case .sensors: return "Sensors"
         case .display: return "Display & Night"
         case .alarms: return "Alarms & Sounds"
@@ -22,6 +23,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .ai: return "desktopcomputer"
         case .voice: return "speaker.wave.2.fill"
+        case .commands: return "command"
         case .sensors: return "eye.fill"
         case .display: return "moon.fill"
         case .alarms: return "alarm.fill"
@@ -35,6 +37,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .ai: return Color(hex: 0x0A84FF)
         case .voice: return Color(hex: 0xFF375F)
+        case .commands: return Color(hex: 0xBF5AF2)
         case .sensors: return Color(hex: 0x30D158)
         case .display: return Color(hex: 0x5E5CE6)
         case .alarms: return Color(hex: 0xFF453A)
@@ -79,11 +82,15 @@ struct SettingsView: View {
             }
         }
         .screenPadding()
-        .onAppear {
-            if let pending = app.pendingSettingsSection, let target = SettingsSection(rawValue: pending) {
-                section = target
-                app.pendingSettingsSection = nil
-            }
+        .onAppear { openPendingSection() }
+        .onChange(of: app.pendingSettingsSection) { _ in openPendingSection() }
+    }
+
+    /// "Open Settings → Alarms" from the assistant, even when Settings is already showing.
+    private func openPendingSection() {
+        if let pending = app.pendingSettingsSection, let target = SettingsSection(rawValue: pending) {
+            section = target
+            app.pendingSettingsSection = nil
         }
     }
 
@@ -116,6 +123,7 @@ struct SettingsView: View {
         case .display: DisplaySettings()
         case .alarms: AlarmsSoundsSettings()
         case .voice: VoiceSettings()
+        case .commands: CommandsSettings()
         case .ai: AISettings()
         case .sensors: SensorsSettings()
         case .today: TodaySettings()
@@ -321,7 +329,7 @@ private struct AboutSettings: View {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "0.8 · Smart assistant (tools, memory, briefings)"),
+                InfoRow(title: "Build step", value: "0.9 · Full voice control + my commands"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])
@@ -379,7 +387,7 @@ private struct PlannedSettings: View {
         case .privacy:
             return [InfoRow(title: "Permissions overview", value: "Step 8"),
                     InfoRow(title: "Assistant history", value: "Settings → Voice")]
-        case .display, .alarms, .today, .about:
+        case .display, .alarms, .today, .about, .commands:
             return []
         }
     }

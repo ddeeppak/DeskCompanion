@@ -16,6 +16,8 @@ struct RootView: View {
     @EnvironmentObject private var proximity: ProximityService
     @EnvironmentObject private var noise: NoiseMeter
     @EnvironmentObject private var briefing: BriefingService
+    @EnvironmentObject private var commands: CommandStore
+    @EnvironmentObject private var assistant: AssistantService
     // Note: RootView deliberately does not observe FocusTimer (it ticks twice a second).
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -86,6 +88,8 @@ struct RootView: View {
             planner.refresh()
             ai.check()
             briefing.check()
+            // Your commands that run at a time of day.
+            for routine in commands.dueRoutines() { assistant.runTriggered(routine) }
         }
         .onReceive(alertTimer) { _ in
             planner.checkAlerts()
