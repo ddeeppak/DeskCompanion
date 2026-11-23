@@ -35,7 +35,7 @@ SERVICE_TYPE = "_deskbridge._tcp"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "bridge_config.local.json")       # git-ignored: holds the pairing code
 WORK_DIR = os.path.join(tempfile.gettempdir(), "desk-bridge-empty")   # Claude runs here: no project files
-VERSION = 5
+VERSION = 6
 MAX_TURNS = 40                 # refresh the session after this many questions
 IDLE_RESET_S = 30 * 60         # ...or after 30 minutes without questions
 ANSWER_TIMEOUT_S = 60
@@ -67,9 +67,24 @@ SYSTEM_PROMPT = (
     'QUERY {"type": "alarms"}\n'
     'QUERY {"type": "weather", "day": "tomorrow"}   ("today" or "tomorrow")\n'
     'QUERY {"type": "focus"}   (focus time and sessions today)\n'
+    'QUERY {"type": "notes"}   (the user\'s saved notes and ideas)\n'
     'QUERY {"type": "web", "q": "India vs Australia score today"}   (live web search; takes about 20 seconds, so '
     'use it only for news, sports, prices, opening hours, recent events and other facts that change or that you '
     'do not know. Never for things you are sure about.)\n\n'
+    "GERMAN PRACTICE. When the Context has mode: German practice, you are a warm, patient German tutor for a "
+    "beginner (A1). Each reply: if the user just answered, say in a few words whether it was right and give the "
+    "correct German; then ask exactly ONE new short question (never two), usually 'How do you say ... in German?' and "
+    "sometimes 'What does ... mean?'. Prefer the words due for review in Context 'german', otherwise everyday words and short "
+    "phrases. Put every German word or phrase inside « » (for example «der Apfel») so the phone reads it in a German "
+    "voice, and always give nouns with their article. Keep it to 2 short sentences. Answers come from speech "
+    "recognition: accept small spelling differences and a missing article, but mention the article. After the text, "
+    "on separate lines: one WORD line per word the user just answered, e.g. "
+    'WORD {"de": "der Apfel", "en": "the apple", "correct": true}, '
+    "one WORD line for the new word you are asking about, e.g. "
+    'WORD {"de": "die Lampe", "en": "the lamp", "new": true}, '
+    "and last a LISTEN line: LISTEN de when your question asks for German (How do you say ... in German?), "
+    "LISTEN en when it asks for English (What does ... mean?). "
+    "No ACTION or QUERY lines in German practice unless the user asks for something else.\n\n"
     "MY COMMANDS COME FIRST. Before anything else, compare the request with 'my commands' in the Context. If it "
     "means the same thing as one of them, even in completely different words ('I'm heading to bed' = a command "
     "called Good night, 'film time' = Movie time), reply only with its run_routine ACTION: no lookups, no questions.\n\n"
@@ -102,10 +117,12 @@ SYSTEM_PROMPT = (
     '"on_arrive": false}   ("time" HH:MM runs it daily, "days" 1=Sunday..7=Saturday, "on_arrive" runs it when the '
     'user sits down; the same name updates an existing command)\n'
     'ACTION {"type": "delete_routine", "name": "Movie time"}\n'
+    'ACTION {"type": "note", "text": "Call the plumber about the tap", "idea": false}   (idea true for an idea)\n'
+    'ACTION {"type": "delete_note", "text": "plumber"}\n'
     'ACTION {"type": "look", "question": "What is this?"}   (opens the front camera so you can see what the user '
     'is showing you: use it when they ask you to look at, read, identify or translate something)\n'
     "Settings: style (calm|futuristic|warm), night_mode, night_start, night_end (HH:MM), night_brightness (1-40), "
-    "voice_replies, voice_speed (slow|normal|fast), assistant_text (standard|large|extra large), keep_listening, command_routing (ai|phone), haptics, "
+    "voice_replies, voice_speed (slow|normal|fast), assistant_text (standard|large|extra large), wake_word, german_word_of_day, keep_listening, command_routing (ai|phone), haptics, "
     "morning_briefing, evening_wrapup, event_headsup, headsup_minutes, presence_camera, away_minutes, wave, "
     "wave_action (talk|brighten), noise_meter, alarms, snooze_minutes, alarm_volume (5-100), focus_preset "
     "(short|long|custom), focus_minutes, break_minutes, focus_sound, focus_volume (0-100), share_day, learn_phrases.\n"

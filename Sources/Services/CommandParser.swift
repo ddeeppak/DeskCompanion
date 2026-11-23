@@ -25,6 +25,12 @@ enum VoiceIntent: Equatable {
     case setStyle(String)
     /// "What's this?", "Read this", "Translate this": take a photo and ask the AI
     case lookAt(String)
+    /// "Note: call the plumber", "I have an idea: a plant shelf" ("" = ask for it)
+    case addNote(String, idea: Bool)
+    /// "Read my notes", "what are my ideas" (nil = both)
+    case readNotes(ideas: Bool?)
+    /// "Let's practise German", "German lesson", "quiz me in German"
+    case germanPractice
     /// Alarm or timer asked without a time ("set an alarm"): ask for it, then listen.
     case needsTime(kind: String)
     case unknown
@@ -41,6 +47,11 @@ enum CommandParser {
         if contains(t, ["cancel the timer", "cancel timer", "stop the timer", "stop timer", "delete the timer"]) {
             return .cancelTimer
         }
+        if let note = noteCommand(t) {
+            if case .addNote(let text, let idea) = note { return .addNote(noteText(text, raw: raw), idea: idea) }
+            return note
+        }
+        if isGermanPractice(t) { return .germanPractice }
         if isLookRequest(t) { return .lookAt(capitalizeFirst(raw.trimmingCharacters(in: .whitespacesAndNewlines))) }
         if let edit = editCommand(t) { return edit }
         if t.contains("timer") || t.hasPrefix("count down") {
@@ -352,6 +363,53 @@ enum CommandParser {
             return nil
         }
         return complete ? .completeTask(name) : .deleteTask(name)
+    }
+
+    // MARK: - Notes and German
+
+    private static func noteCommand(_ t: String) -> VoiceIntent? {
+        let lead = #"^(?:please |okay |ok |hey )?(?:can you |could you )?"#
+        if let found = firstMatch(lead + #"(?:i have|i've got|i got|here's|heres) an idea(?:[: ,]+(?:that )?(.*))?$"#, in: t) {
+            return .addNote(capitalizeFirst(found.0[1]), idea: true)
+        }
+        if let found = firstMatch(lead + #"(?:new|save an|save this|add an|add this|another) idea(?:[: ]+(.*))?$"#, in: t) {
+            return .addNote(capitalizeFirst(found.0[1]), idea: true)
+        }
+        if let found = firstMatch(lead + #"(?:take|make|add|save|write) (?:a |an |this |another )?note(?: that| saying| to say)?(?:[: ]+(.*))?$"#, in: t) {
+            return .addNote(capitalizeFirst(found.0[1]), idea: false)
+        }
+        if let found = firstMatch(#"^(?:note|note down|jot down|write down|note that)[: ]+(.+)$"#, in: t) {
+            return .addNote(capitalizeFirst(found.0[1]), idea: false)
+        }
+        if let found = firstMatch(#"\b(?:read|what are|what's|whats|show|tell me|list) (?:me )?(?:all )?(?:my |the )?(?:last |latest |recent )?(notes|ideas|note|idea)\b"#, in: t) {
+            let word = found.0[1]
+            return .readNotes(ideas: word.hasPrefix("idea") ? true : nil)
+        }
+        return nil
+    }
+
+    /// The note in your own words and capitals ("coorg" → "Coorg"), without "that …" or "… save it".
+    private static func noteText(_ found: String, raw: String) -> String {
+        guard !found.isEmpty else { return "" }
+        let count = found.split(separator: " ").count
+        let rawWords = raw.components(separatedBy: CharacterSet.whitespaces)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ",:;.!?\"“”")) }
+            .filter { !$0.isEmpty }
+        var words = rawWords.count >= count ? Array(rawWords.suffix(count)) : found.split(separator: " ").map(String.init)
+        while let first = words.first, ["that", "to", "about"].contains(first.lowercased()), words.count > 1 {
+            words.removeFirst()
+        }
+        var text = words.joined(separator: " ")
+        for tail in [" save it", " please", " for me", " thanks", " thank you", " save that"] {
+            if text.lowercased().hasSuffix(tail) { text = String(text.dropLast(tail.count)) }
+        }
+        return capitalizeFirst(text.trimmingCharacters(in: .whitespaces))
+    }
+
+    static func isGermanPractice(_ t: String) -> Bool {
+        guard t.contains("german") else { return false }
+        let pattern = #"\b(?:practi[cs]e|practicing|practising|learn|learning|study|teach me|quiz me|quiz|lesson|class|tutor|let's do|lets do|revise|review)\b"#
+        return firstMatch(pattern, in: t) != nil && !t.contains("how do you say") && !t.contains("translate")
     }
 
     /// "what's this", "what am I holding", "read this label", "translate this" (not "what's this week").

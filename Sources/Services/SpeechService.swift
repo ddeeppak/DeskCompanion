@@ -100,13 +100,14 @@ final class SpeechService: ObservableObject {
     }
 
     /// Starts listening. `onFinish` gets the final text ("" if nothing was heard); `onDenied` if permission is off.
+    /// `locale`: listen in another language for this one turn (German answers in German practice).
     func start(onFinish: @escaping (String) -> Void, onDenied: @escaping () -> Void,
-               noSpeechTimeout: TimeInterval = 7) {
+               noSpeechTimeout: TimeInterval = 7, locale: String? = nil) {
         guard !isListening else { return }
         self.noSpeechTimeout = noSpeechTimeout
         requestPermission { [weak self] granted in
             guard let self = self else { return }
-            if granted { self.begin(onFinish) } else { onDenied() }
+            if granted { self.begin(onFinish, locale: locale) } else { onDenied() }
         }
     }
 
@@ -117,10 +118,11 @@ final class SpeechService: ObservableObject {
         finish("")
     }
 
-    private func begin(_ completion: @escaping (String) -> Void) {
+    private func begin(_ completion: @escaping (String) -> Void, locale: String? = nil) {
+        WakeWordService.shared.pauseForAssistant()                               // "Hey Desk" lets go of the mic
         NotificationCenter.default.post(name: .microphoneNeeded, object: nil)   // noise meter lets go of the mic
         AudioSessionSetup.ensure()
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeID)) ?? SFSpeechRecognizer(),
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale ?? localeID)) ?? SFSpeechRecognizer(),
               recognizer.isAvailable else {
             completion("")
             return
@@ -264,7 +266,27 @@ final class VoiceService: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         AudioSessionSetup.ensure()
         streaming = false
         synthesizer.stopSpeaking(at: .immediate)
-        synthesizer.speak(utterance(text))
+        for part in Self.parts(text) { synthesizer.speak(utterance(part.text, german: part.german)) }
+    }
+
+    /// "The word for apple is «der Apfel»." → English part, then «der Apfel» in a German voice.
+    static func parts(_ text: String) -> [(text: String, german: Bool)] {
+        guard text.contains("«") else { return [(text: text, german: false)] }
+        var out: [(text: String, german: Bool)] = []
+        var current = ""
+        var inGerman = false
+        func flush() {
+            let piece = current.trimmingCharacters(in: .whitespaces)
+            if piece.rangeOfCharacter(from: .alphanumerics) != nil { out.append((text: piece, german: inGerman)) }
+            current = ""
+        }
+        for ch in text {
+            if ch == "«" { flush(); inGerman = true; continue }
+            if ch == "»" { flush(); inGerman = false; continue }
+            current.append(ch)
+        }
+        flush()
+        return out
     }
 
     func stop() {
@@ -308,11 +330,19 @@ final class VoiceService: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private func enqueue(_ text: String) {
         guard enabled, !text.isEmpty else { return }
         AudioSessionSetup.ensure()
-        synthesizer.speak(utterance(text))           // queued after the previous sentence
+        for part in Self.parts(text) {               // queued after the previous sentence
+            synthesizer.speak(utterance(part.text, german: part.german))
+        }
     }
 
-    private func utterance(_ text: String) -> AVSpeechUtterance {
+    private func utterance(_ text: String, german: Bool = false) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
+        if german {
+            utterance.voice = AVSpeechSynthesisVoice.speechVoices().first { $0.language == "de-DE" && $0.quality == .enhanced }
+                ?? AVSpeechSynthesisVoice(language: "de-DE")
+            utterance.rate = min(rate, AVSpeechUtteranceDefaultSpeechRate * 0.92)    // a little slower for learning
+            return utterance
+        }
         utterance.voice = AVSpeechSynthesisVoice(identifier: voiceID)
             ?? voices.first { $0.language == "en-US" && $0.quality == .enhanced }
             ?? AVSpeechSynthesisVoice(language: "en-US")

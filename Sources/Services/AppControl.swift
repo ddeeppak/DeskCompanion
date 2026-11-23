@@ -31,6 +31,7 @@ final class AppControl: ObservableObject {
     weak var ai: AIService?
     weak var habits: HabitStore?
     weak var commands: CommandStore?
+    weak var german: GermanStore?
 
     func configure(app: AppState, night: NightMode, voice: VoiceService, assistant: AssistantService,
                    briefing: BriefingService, presence: PresenceService, proximity: ProximityService,
@@ -210,6 +211,12 @@ final class AppControl: ObservableObject {
         }
         if let ai = ai {
             list.append(toggle("share_day", "Share my day with the AI", get: { ai.shareDay }, set: { ai.shareDay = $0 }))
+        }
+        let wake = WakeWordService.shared
+        list.append(toggle("wake_word", "Hey Desk", get: { wake.enabled }, set: { wake.enabled = $0 }))
+        if let german = german {
+            list.append(toggle("german_word_of_day", "German word of the day", get: { german.wordOfDayOn },
+                               set: { german.wordOfDayOn = $0 }))
         }
         if let commands = commands {
             list.append(toggle("learn_phrases", "Learn new phrases", get: { commands.learningOn }, set: { commands.learningOn = $0 }))

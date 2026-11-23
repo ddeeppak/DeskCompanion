@@ -22,6 +22,7 @@ final class BriefingService: ObservableObject {
     private weak var speech: SpeechService?
     private weak var habits: HabitStore?
     private var announcedEvents: Set<String> = []
+    weak var german: GermanStore?
     private var clearWork: DispatchWorkItem?
 
     init() {
@@ -139,6 +140,10 @@ final class BriefingService: ObservableObject {
         }
         if let streak = habits?.perfectStreak, streak >= 2 {
             parts.append("You're on a \(streak)-day habit streak. Keep it going!")
+        }
+        if let german = german, german.wordOfDayOn {
+            let word = german.wordOfTheDay(now)
+            parts.append("Your German word of the day is «\(word.de)», which means \(word.en).")
         }
         return parts.joined(separator: " ")
     }

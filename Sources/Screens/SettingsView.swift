@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case ai, voice, commands, sensors, display, alarms, today, privacy, about
+    case ai, voice, commands, german, sensors, display, alarms, today, privacy, about
 
     var id: String { rawValue }
 
@@ -10,6 +10,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .ai: return "AI & Network"
         case .voice: return "Voice"
         case .commands: return "Commands"
+        case .german: return "German"
         case .sensors: return "Sensors"
         case .display: return "Display & Night"
         case .alarms: return "Alarms & Sounds"
@@ -24,6 +25,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .ai: return "desktopcomputer"
         case .voice: return "speaker.wave.2.fill"
         case .commands: return "command"
+        case .german: return "character.book.closed.fill"
         case .sensors: return "eye.fill"
         case .display: return "moon.fill"
         case .alarms: return "alarm.fill"
@@ -38,6 +40,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .ai: return Color(hex: 0x0A84FF)
         case .voice: return Color(hex: 0xFF375F)
         case .commands: return Color(hex: 0xBF5AF2)
+        case .german: return Color(hex: 0x32ADE6)
         case .sensors: return Color(hex: 0x30D158)
         case .display: return Color(hex: 0x5E5CE6)
         case .alarms: return Color(hex: 0xFF453A)
@@ -124,6 +127,7 @@ struct SettingsView: View {
         case .alarms: AlarmsSoundsSettings()
         case .voice: VoiceSettings()
         case .commands: CommandsSettings()
+        case .german: GermanSettings()
         case .ai: AISettings()
         case .sensors: SensorsSettings()
         case .today: TodaySettings()
@@ -353,7 +357,7 @@ private struct AboutSettings: View {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "1.0 · Polish, stability, web + camera"),
+                InfoRow(title: "Build step", value: "1.1 · Notes, Hey Desk, German"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])
@@ -436,7 +440,7 @@ private struct PlannedSettings: View {
         case .privacy:
             return [InfoRow(title: "Permissions overview", value: "Step 8"),
                     InfoRow(title: "Assistant history", value: "Settings → Voice")]
-        case .display, .alarms, .today, .about, .commands:
+        case .display, .alarms, .today, .about, .commands, .german:
             return []
         }
     }

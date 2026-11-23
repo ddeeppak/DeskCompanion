@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 64 pt left rail: Home, Assistant, Today, Focus, Settings + mic button.
+/// 64 pt left rail: Home, Assistant, Today, Notes, Focus, Settings + mic button.
 /// Selected item = filled symbol in the accent colour, others = outline in secondary label.
 struct RailView: View {
     @EnvironmentObject private var app: AppState

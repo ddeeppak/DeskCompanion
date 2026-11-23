@@ -331,7 +331,8 @@ final class NoiseMeter: ObservableObject {
     private func sample() {
         guard enabled, !sampling, !deviceIsHot(),
               AVAudioSession.sharedInstance().recordPermission == .granted,
-              !(speech?.isListening ?? false) else { return }
+              !(speech?.isListening ?? false),
+              !WakeWordService.shared.running else { return }          // "Hey Desk" reports the level instead
         AudioSessionSetup.ensure()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -354,6 +355,14 @@ final class NoiseMeter: ObservableObject {
         }
         sampling = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.finish() }
+    }
+
+    /// Level measured by "Hey Desk" while it listens (so the microphone isn't opened twice).
+    func report(meanSquare: Double) {
+        guard enabled else { return }
+        let rms = sqrt(meanSquare)
+        guard rms > 0 else { return }
+        decibels = Int(max(20, min(110, 20 * log10(rms) + 95)).rounded())
     }
 
     private func finish() {

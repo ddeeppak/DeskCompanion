@@ -99,6 +99,10 @@ struct RootView: View {
         }
         .onReceive(alarmTimer) { _ in
             alarms.check()
+            WakeWordService.shared.evaluate()          // start or pause "Hey Desk"
+        }
+        .onChange(of: assistant.phase) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { WakeWordService.shared.evaluate() }
         }
         .onChange(of: quickTimer.ringing) { ringing in
             guard ringing else { return }
@@ -145,6 +149,7 @@ struct RootView: View {
                 noise.start()
             case .background:
                 stability.markBackground()
+                WakeWordService.shared.stop()
                 night.restoreBrightness()
                 pressure.stop()
                 presence.suspend()
@@ -224,6 +229,7 @@ struct RootView: View {
         case .home: HomeView()
         case .assistant: AssistantView()
         case .today: TodayView()
+        case .notes: NotesView()
         case .focus: FocusView()
         case .settings: SettingsView()
         }

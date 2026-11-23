@@ -27,6 +27,8 @@ struct DeskCompanionApp: App {
     @StateObject private var commands = CommandStore()
     @StateObject private var control = AppControl()
     @StateObject private var stability = StabilityMonitor.shared
+    @StateObject private var notes = NoteStore()
+    @StateObject private var german = GermanStore()
 
     init() {
         // Alarms ring inside the app; the backup notification is only for when the app isn't open.
@@ -62,6 +64,8 @@ struct DeskCompanionApp: App {
                 .environmentObject(briefing)
                 .environmentObject(commands)
                 .environmentObject(stability)
+                .environmentObject(notes)
+                .environmentObject(german)
                 .onAppear {
                     ai.app = app
                     noise.speech = speech
@@ -100,7 +104,26 @@ struct DeskCompanionApp: App {
                     control.configure(app: app, night: night, voice: voice, assistant: assistant, briefing: briefing,
                                       presence: presence, proximity: proximity, noise: noise, alarms: alarms,
                                       focus: focus, library: library, ai: ai, habits: habits, commands: commands)
-                    assistant.attach(control: control, commands: commands)
+                    assistant.attach(control: control, commands: commands, notes: notes, german: german)
+                    control.german = german
+                    briefing.german = german
+                    // "Hey Desk": only while someone is at the desk and nothing else is using the microphone.
+                    let wake = WakeWordService.shared
+                    wake.noise = noise
+                    wake.localeID = speech.localeID
+                    wake.allowed = {
+                        !speech.isListening && !voice.isBusy && alarms.ringing == nil
+                            && [.idle, .answered, .misheard].contains(assistant.phase) && !assistant.germanMode
+                            && !(night.showNight && !wake.atNight) && !presence.isAway
+                            && UIApplication.shared.applicationState == .active
+                    }
+                    wake.onWake = { said in
+                        presence.markPresent()
+                        night.setAway(false)
+                        app.registerTouch()
+                        assistant.handleWake(said)
+                    }
+                    wake.evaluate()
                     // The iPhone owns memory: take over the PC's facts the first time it connects.
                     ai.onMemories = { facts in commands.importFromPC(facts) }
                     ai.startDiscovery()

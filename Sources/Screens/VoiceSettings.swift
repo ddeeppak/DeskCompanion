@@ -8,6 +8,7 @@ struct VoiceSettings: View {
     @EnvironmentObject private var voice: VoiceService
     @EnvironmentObject private var assistant: AssistantService
     @EnvironmentObject private var briefing: BriefingService
+    @ObservedObject private var wake = WakeWordService.shared
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -15,11 +16,48 @@ struct VoiceSettings: View {
             listeningSection
             repliesSection
                 .padding(.top, 12)
+            wakeSection
+                .padding(.top, 12)
             briefingsSection
                 .padding(.top, 12)
             historySection
                 .padding(.top, 12)
         }
+    }
+
+    private var wakeSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Hey Desk")
+            VStack(spacing: 0) {
+                SettingsRow {
+                    Image(systemName: "waveform.circle.fill").foregroundColor(theme.accent).frame(width: 24)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Listen for “Hey Desk”")
+                        Text(wakeStatus).font(.system(size: 13)).foregroundColor(theme.secondaryLabel)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $wake.enabled).labelsHidden().toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                }
+                .padding(.vertical, 3)
+                if wake.enabled {
+                    RowSeparator()
+                    SettingsRow {
+                        Image(systemName: "moon.fill").foregroundColor(theme.indigo).frame(width: 24)
+                        Text("Also at night")
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: $wake.atNight).labelsHidden().toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                    }
+                }
+            }
+            .groupedBox()
+            footnote("Say “Hey Desk” or “Hey Desk, what's the weather?”. Listening happens only on this iPhone and only while someone is at the desk; nothing is recorded or sent until you say Hey Desk. It uses more battery and warmth, and pauses itself if the phone gets hot.")
+        }
+    }
+
+    private var wakeStatus: String {
+        if let reason = wake.unavailableReason, wake.enabled { return reason }
+        if !wake.enabled { return "Off" }
+        return wake.running ? "Listening now" : "Paused (busy, away or night)"
     }
 
     private var briefingsSection: some View {

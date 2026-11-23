@@ -73,6 +73,12 @@ final class AssistantService: ObservableObject {
     private var pendingUndo: [() -> Void] = []
     private weak var control: AppControl?
     private weak var commands: CommandStore?
+    private weak var notes: NoteStore?
+    private weak var german: GermanStore?
+    /// German practice: the AI is a tutor, German is read in a German voice, answers are heard in German.
+    @Published private(set) var germanMode = false
+    /// The tutor's LISTEN line: the next answer is in German ("de-DE") or English (nil).
+    private var nextListenLocale: String? = nil
 
     private var app: AppState?
     private var planner: PlannerService?
@@ -118,9 +124,22 @@ final class AssistantService: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func attach(control: AppControl, commands: CommandStore) {
+    func attach(control: AppControl, commands: CommandStore, notes: NoteStore, german: GermanStore) {
         self.control = control
         self.commands = commands
+        self.notes = notes
+        self.german = german
+    }
+
+    /// "Hey Desk, what's the weather?" → answer it; "Hey Desk" alone → listen.
+    func handleWake(_ said: String) {
+        app?.screen = .assistant
+        if said.split(separator: " ").count >= 2 {
+            Haptics.tap()
+            handle(said)
+        } else {
+            listen()
+        }
     }
 
     /// Call right before speaking an answer that may have a follow-up.
@@ -154,12 +173,13 @@ final class AssistantService: ObservableObject {
         isFollowUp = followUp
         app?.screen = .assistant
         phase = .listening
-        speech.hints = listeningHints()
+        let inGerman = germanMode && nextListenLocale != nil
+        speech.hints = inGerman ? (german?.due.map { $0.de } ?? []) : listeningHints()
         speech.start(onFinish: { [weak self] text in
             self?.received(text)
         }, onDenied: { [weak self] in
             self?.phase = .noPermission
-        }, noSpeechTimeout: followUp ? 5 : 7)
+        }, noSpeechTimeout: germanMode ? 9 : (followUp ? 5 : 7), locale: inGerman ? nextListenLocale : nil)
     }
 
     func stopListening() { speech?.stop() }
@@ -174,6 +194,7 @@ final class AssistantService: ObservableObject {
         words += (planner?.events ?? []).map { $0.title }
         words += (commands?.routines ?? []).filter { $0.enabled }.flatMap { $0.phrases }
         words += (commands?.learned ?? []).prefix(20).map { $0.phrase }
+        words += ["take a note", "I have an idea", "read my notes", "practise German"]
         return words
     }
 
@@ -228,6 +249,10 @@ final class AssistantService: ObservableObject {
         let wasFollowUp = isFollowUp
         isFollowUp = false
         if text.isEmpty {
+            if wasFollowUp && germanMode {
+                endGerman()                          // no answer: finish the lesson with a summary
+                return
+            }
             if wasFollowUp {
                 // Nothing more was said: quietly go back to the answer.
                 pendingPrefix = nil
@@ -253,6 +278,15 @@ final class AssistantService: ObservableObject {
         }
         if confirmation != nil {
             answerConfirmation(text)
+            return
+        }
+        if germanMode {
+            if isGermanExit(text) {
+                append(ChatMessage(fromUser: true, text: text, source: nil, date: Date()))
+                endGerman()
+            } else {
+                askAI(text)                          // an answer for the tutor
+            }
             return
         }
         if let closing = closingReply(text) {
@@ -287,6 +321,10 @@ final class AssistantService: ObservableObject {
         let intent = CommandParser.parse(text)
         if case .lookAt(let question) = intent {
             startLook(question, showQuestion: true)
+            return
+        }
+        if intent == .germanPractice {
+            startGerman(said: text)
             return
         }
         // 2. AI first: it understands any phrasing and can do several things at once. Clear-cut commands
@@ -367,7 +405,7 @@ final class AssistantService: ObservableObject {
         let words = lower.split(separator: " ").count
         switch intent {
         case .timer, .alarm: return !looksLikeQuestion(text)
-        case .cancelTimer, .stopFocus, .lookAt: return true
+        case .cancelTimer, .stopFocus, .lookAt, .addNote, .readNotes, .germanPractice: return true
         case .time, .date: return words <= 5
         case .deleteAlarm(let hour, _, _, _): return hour != nil
         default: return false
@@ -658,7 +696,8 @@ final class AssistantService: ObservableObject {
                         voice.stop()
                         return
                     }
-                    let safe = fullText.count - holdBack
+                    // Tutor lines (WORD / LISTEN) at the end are for the phone, not to be read out.
+                    let safe = Self.tutorLinesStart(fullText) ?? (fullText.count - holdBack)
                     guard safe > shownCount else { return }
                     let from = fullText.index(fullText.startIndex, offsetBy: shownCount)
                     let to = fullText.index(fullText.startIndex, offsetBy: safe)
@@ -693,21 +732,27 @@ final class AssistantService: ObservableObject {
                         self.performAIAction(result.answer, learnFrom: (round == 0 && learn) ? question : nil, ms: result.ms)
                         return
                     }
-                    if shownCount < fullText.count {                      // the held-back tail
-                        show(String(fullText[fullText.index(fullText.startIndex, offsetBy: shownCount)...]))
-                        shownCount = fullText.count
+                    let visibleEnd = Self.tutorLinesStart(fullText) ?? fullText.count
+                    if shownCount < visibleEnd {                          // the held-back tail
+                        let from = fullText.index(fullText.startIndex, offsetBy: shownCount)
+                        let to = fullText.index(fullText.startIndex, offsetBy: visibleEnd)
+                        show(String(fullText[from..<to]))
+                        shownCount = visibleEnd
                     }
-                    if Self.soundsLikeGoodbye(result.answer) {
+                    let spokenAnswer = self.applyTutorLines(result.answer)
+                    if self.germanMode {
+                        self.followUpArmed = true       // German practice: always listen for the answer
+                    } else if Self.soundsLikeGoodbye(spokenAnswer) {
                         self.followUpArmed = false      // the AI said goodbye: don't keep listening
                     } else {
                         self.armFollowUp()
                     }
                     voice.endStream()
                     if let index = self.messages.lastIndex(where: { $0.id == answerID }) {
-                        self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: result.answer,
+                        self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: spokenAnswer,
                                                            source: "ai", date: self.messages[index].date)
                     } else {
-                        self.messages.append(ChatMessage(id: answerID, fromUser: false, text: result.answer,
+                        self.messages.append(ChatMessage(id: answerID, fromUser: false, text: spokenAnswer,
                                                          source: "ai", date: Date()))
                     }
                     self.handledIn = Double(result.ms) / 1000
@@ -805,6 +850,16 @@ final class AssistantService: ObservableObject {
             let parts = time.split(separator: ":").compactMap { Int($0) }
             guard parts.count >= 2 else { return nil }
             return perform(.deleteAlarm(hour: parts[0], minute: parts[1], meridiem: nil, all: false))
+        case "note":
+            let text = CommandStore.value(json["text"])
+            return perform(.addNote(text.isEmpty ? title : text, idea: CommandStore.value(json["idea"]) == "on"))
+        case "deletenote":
+            guard let notes = notes, let note = notes.find(CommandStore.value(json["text"])) else {
+                return ("I couldn't find that note.", nil)
+            }
+            notes.delete(note.id)
+            pendingUndo.append { notes.restore(note) }
+            return ("Deleted the note “\(note.text.prefix(40))”.", nil)
         case "canceltimer":
             return perform(.cancelTimer)
         case "stopfocus":
@@ -866,6 +921,10 @@ final class AssistantService: ObservableObject {
                 }
             case "web":
                 statuses.insert("Searching the web…", at: 0)        // answered by searchWeb()
+            case "notes":
+                statuses.append("Checking your notes…")
+                let list = (notes?.sorted ?? []).prefix(20).map { "\($0.isIdea ? "(idea) " : "")\($0.text) [\(NotesView.when($0.created))]" }
+                out.append("notes: " + (list.isEmpty ? "none" : list.joined(separator: "; ")))
             case "focus":
                 statuses.append("Checking your focus time…")
                 if let focus = focus {
@@ -912,6 +971,87 @@ final class AssistantService: ObservableObject {
                 self.askAI(combined, round: round)
             }
         }
+    }
+
+    // MARK: German practice
+
+    func startGerman(said: String = "Let's practise German.") {
+        guard let ai = ai, ai.isConfigured else {
+            answerOffline(said, reason: "German practice needs the AI on your PC. Your word of the day still comes with the morning briefing.")
+            return
+        }
+        german?.startSession()
+        germanMode = true
+        nextListenLocale = nil
+        app?.screen = .assistant
+        askAI(said)
+    }
+
+    func endGerman() {
+        guard germanMode else { return }
+        germanMode = false
+        nextListenLocale = nil
+        followUpArmed = false
+        let right = german?.sessionRight ?? 0
+        let total = german?.sessionTotal ?? 0
+        let summary = german?.endSession() ?? "Okay, we'll practise another time."
+        append(ChatMessage(fromUser: false, text: summary, source: "offline", date: Date()))
+        card = ActionCard(kind: .info, heading: "German practice", title: total > 0 ? "\(right) of \(total) right" : "No answers yet",
+                          detail: "\(german?.words.count ?? 0) words · \(german?.streak ?? 0)-day streak", undo: nil, canEdit: true)
+        phase = .answered
+        voice?.speak(summary)
+    }
+
+    private func isGermanExit(_ text: String) -> Bool {
+        let words = CommandStore.normalize(text).split(separator: " ").map(String.init)
+        guard words.count <= 6 else { return false }
+        let exits: Set<String> = ["stop", "stopp", "enough", "finish", "finished", "end", "ende", "done", "quit", "exit",
+                                  "bye", "goodbye", "tschüss", "tschuss", "schluss", "aufhören", "aufhoren", "pause"]
+        return words.contains { exits.contains($0) } || CommandStore.normalize(text).contains("that's all")
+    }
+
+    /// Where the tutor's WORD / LISTEN lines start (they are not read out), as a character offset.
+    private static func tutorLinesStart(_ text: String) -> Int? {
+        let starts = ["WORD {", "WORD{", "LISTEN de", "LISTEN en", "LISTEN de-", "\nLISTEN"]
+            .compactMap { text.range(of: $0)?.lowerBound }
+        guard let first = starts.min() else { return nil }
+        return text.distance(from: text.startIndex, to: first)
+    }
+
+    /// Saves WORD lines to your German words, notes the LISTEN language, and returns the text to show.
+    private func applyTutorLines(_ answer: String) -> String {
+        guard Self.tutorLinesStart(answer) != nil else { return answer }
+        var kept: [String] = []
+        for line in answer.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("WORD"), let json = CommandStore.json(trimmed) {
+                let de = CommandStore.value(json["de"])
+                let en = CommandStore.value(json["en"])
+                let correctText = CommandStore.value(json["correct"])
+                german?.record(de: de, en: en, correct: correctText.isEmpty ? nil : correctText == "on")
+            } else if trimmed.hasPrefix("LISTEN") {
+                nextListenLocale = trimmed.lowercased().contains("de") ? "de-DE" : nil
+            } else {
+                kept.append(line)
+            }
+        }
+        let text = kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        // The question decides the language of the answer ("…in German?" → listen in German).
+        let question = (text.components(separatedBy: "?").dropLast().last ?? "").lowercased()
+        if question.contains("in german") || question.contains("auf deutsch") {
+            nextListenLocale = "de-DE"
+        } else if question.contains("mean") || question.contains("in english") {
+            nextListenLocale = nil
+        }
+        return text
+    }
+
+    // MARK: Notes
+
+    /// The "Say a note" button: the next thing you say is saved as a note (or idea).
+    func dictateNote(idea: Bool) {
+        pendingPrefix = idea ? "new idea" : "take a note"
+        listen()
     }
 
     // MARK: Camera questions
@@ -1031,6 +1171,13 @@ final class AssistantService: ObservableObject {
             context["sounds"] = control.soundNames
             let habitNames = (control.habits?.habits ?? []).map { $0.name }
             if !habitNames.isEmpty { context["habits"] = habitNames.joined(separator: ", ") }
+        }
+        if germanMode, let german = german {
+            context["mode"] = "German practice"
+            context["german"] = german.contextSummary
+        }
+        if let notes = notes, !notes.notes.isEmpty {
+            context["notes"] = "\(notes.notes.count) saved (use QUERY notes to read them)"
         }
         if let commands = commands {
             if !commands.memory.isEmpty { context["memory"] = commands.memory.joined(separator: " | ") }
@@ -1159,6 +1306,32 @@ final class AssistantService: ObservableObject {
 
         case .lookAt:
             return ("Camera questions need the AI on your PC.", nil)
+
+        case .germanPractice:
+            return ("German practice needs the AI on your PC.", nil)
+
+        case .addNote(let text, let idea):
+            guard let notes = notes else { return ("Notes aren't available.", nil) }
+            if text.trimmingCharacters(in: .whitespaces).isEmpty {
+                pendingPrefix = idea ? "new idea" : "take a note"
+                return (idea ? "Go ahead, what's your idea?" : "Go ahead, I'm listening.", nil)
+            }
+            let note = notes.add(text, idea: idea)
+            pendingUndo.append { notes.delete(note.id) }
+            return (idea ? "Saved your idea." : "Noted.",
+                    ActionCard(kind: .info, heading: idea ? "Idea saved" : "Note saved", title: note.text,
+                               detail: "In Notes", undo: nil, canEdit: true))
+
+        case .readNotes(let ideas):
+            guard let notes = notes else { return ("Notes aren't available.", nil) }
+            let list = notes.sorted.filter { note in ideas.map { note.isIdea == $0 } ?? true }
+            let kind = ideas == true ? "ideas" : "notes"
+            guard !list.isEmpty else { return ("You don't have any \(kind) yet.", nil) }
+            let latest = list.prefix(3).map { $0.text }
+            let intro = list.count == 1 ? "Your only \(kind.dropLast()) is:" : "Your latest \(kind) are:"
+            return ("\(intro) \(latest.joined(separator: ". ")).",
+                    ActionCard(kind: .info, heading: "Notes", title: latest[0], detail: "\(list.count) in Notes",
+                               undo: nil, canEdit: true))
 
         case .completeTask(let name):
             guard let planner = planner, planner.remindersAccess == .granted else {
@@ -1371,6 +1544,11 @@ final class AssistantService: ObservableObject {
             app?.screen = .settings
         case .reminder, .task, .calendar:
             app?.screen = .today
+        case .info where card.heading == "Note saved" || card.heading == "Idea saved" || card.heading == "Notes":
+            app?.screen = .notes
+        case .info where card.heading == "German practice":
+            app?.pendingSettingsSection = "german"
+            app?.screen = .settings
         case .info where card.heading.hasPrefix("Command") || card.heading == "Your command":
             app?.pendingSettingsSection = "commands"
             app?.screen = .settings
@@ -1384,6 +1562,8 @@ final class AssistantService: ObservableObject {
         card = nil
         confirmation = nil
         pendingRun = nil
+        germanMode = false
+        nextListenLocale = nil
         phase = .idle
         UserDefaults.standard.removeObject(forKey: Self.historyKey)
         ai?.reset()                                   // fresh conversation on the PC too

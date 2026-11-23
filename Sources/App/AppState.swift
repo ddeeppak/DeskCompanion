@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum AppScreen: String, CaseIterable, Identifiable {
-    case home, assistant, today, focus, settings
+    case home, assistant, today, notes, focus, settings
 
     var id: String { rawValue }
 
@@ -10,6 +10,7 @@ enum AppScreen: String, CaseIterable, Identifiable {
         case .home: return "Home"
         case .assistant: return "Assistant"
         case .today: return "Today"
+        case .notes: return "Notes"
         case .focus: return "Focus"
         case .settings: return "Settings"
         }
@@ -21,6 +22,7 @@ enum AppScreen: String, CaseIterable, Identifiable {
         case .home: return "house"
         case .assistant: return "sparkles"
         case .today: return "checkmark.circle"
+        case .notes: return "lightbulb"
         case .focus: return "timer"
         case .settings: return "gearshape"
         }
@@ -31,6 +33,7 @@ enum AppScreen: String, CaseIterable, Identifiable {
         case .home: return "house.fill"
         case .assistant: return "sparkles"
         case .today: return "checkmark.circle.fill"
+        case .notes: return "lightbulb.fill"
         case .focus: return "timer"
         case .settings: return "gearshape.fill"
         }
