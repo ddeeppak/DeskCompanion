@@ -87,6 +87,7 @@ final class SpeechService: ObservableObject {
     }
 
     private func begin(_ completion: @escaping (String) -> Void) {
+        NotificationCenter.default.post(name: .microphoneNeeded, object: nil)   // noise meter lets go of the mic
         AudioSessionSetup.ensure()
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeID)) ?? SFSpeechRecognizer(),
               recognizer.isAvailable else {
@@ -228,17 +229,59 @@ final class VoiceService: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     func speak(_ text: String, force: Bool = false) {
         guard enabled || force, !text.isEmpty else { return }
         AudioSessionSetup.ensure()
+        streaming = false
         synthesizer.stopSpeaking(at: .immediate)
+        synthesizer.speak(utterance(text))
+    }
+
+    func stop() {
+        streaming = false
+        streamBuffer = ""
+        synthesizer.stopSpeaking(at: .immediate)
+    }
+
+    // MARK: Streamed speech (AI answers): speak each finished sentence while the rest is still arriving
+
+    private var streaming = false
+    private var streamBuffer = ""
+
+    func beginStream() {
+        synthesizer.stopSpeaking(at: .immediate)
+        streamBuffer = ""
+        streaming = true
+    }
+
+    func appendStream(_ piece: String) {
+        guard streaming else { return }
+        streamBuffer += piece
+        while let end = streamBuffer.range(of: "[.!?]\\s", options: .regularExpression) {
+            let sentence = String(streamBuffer[..<end.upperBound]).trimmingCharacters(in: .whitespaces)
+            streamBuffer = String(streamBuffer[end.upperBound...])
+            enqueue(sentence)
+        }
+    }
+
+    func endStream() {
+        guard streaming else { return }
+        let rest = streamBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !rest.isEmpty { enqueue(rest) }
+        streamBuffer = ""
+        streaming = false
+    }
+
+    private func enqueue(_ text: String) {
+        guard enabled, !text.isEmpty else { return }
+        AudioSessionSetup.ensure()
+        synthesizer.speak(utterance(text))           // queued after the previous sentence
+    }
+
+    private func utterance(_ text: String) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(identifier: voiceID)
             ?? voices.first { $0.language == "en-US" && $0.quality == .enhanced }
             ?? AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = rate
-        synthesizer.speak(utterance)
-    }
-
-    func stop() {
-        synthesizer.stopSpeaking(at: .immediate)
+        return utterance
     }
 
     private func save() {
@@ -253,7 +296,8 @@ final class VoiceService: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        DispatchQueue.main.async { self.speaking = false }
+        // More sentences may be queued (streamed answers).
+        DispatchQueue.main.async { self.speaking = self.synthesizer.isSpeaking || self.streaming }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {

@@ -18,8 +18,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.deskcompanion.u7k3q2
         PRODUCT_NAME: DeskCompanion
-        MARKETING_VERSION: "0.5.2"
-        CURRENT_PROJECT_VERSION: "8"
+        MARKETING_VERSION: "0.7"
+        CURRENT_PROJECT_VERSION: "10"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
@@ -41,6 +41,7 @@ targets:
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "Used to hear your voice commands. Nothing is recorded or saved."
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Turns your voice into text for commands like timers and reminders. Apple may process speech on its servers."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Notices when you sit down or leave the desk, to wake or dim the screen. Checked on the iPhone only; nothing is recorded, saved or sent."
         INFOPLIST_KEY_NSMotionUsageDescription: "Used to read the barometer for the air pressure trend on the Home screen."
         # Sideloadly signs the app later with your Apple ID
         CODE_SIGNING_ALLOWED: NO

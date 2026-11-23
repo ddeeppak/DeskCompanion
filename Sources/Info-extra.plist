@@ -5,5 +5,17 @@
 	<!-- Keys Xcode's generated Info.plist can't set from build settings; merged with the generated keys. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- Local AI: find the Desk Bridge on Wi-Fi and talk to it over plain HTTP on the local network. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Finds and talks to the Desk Bridge on your PC, so the assistant can answer questions with the AI running there.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_deskbridge._tcp</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

@@ -19,6 +19,10 @@ struct DeskCompanionApp: App {
     @StateObject private var speech = SpeechService()
     @StateObject private var voice = VoiceService()
     @StateObject private var assistant = AssistantService()
+    @StateObject private var ai = AIService()
+    @StateObject private var presence = PresenceService()
+    @StateObject private var proximity = ProximityService()
+    @StateObject private var noise = NoiseMeter()
 
     init() {
         // Alarms ring inside the app; the backup notification is only for when the app isn't open.
@@ -47,9 +51,37 @@ struct DeskCompanionApp: App {
                 .environmentObject(speech)
                 .environmentObject(voice)
                 .environmentObject(assistant)
+                .environmentObject(ai)
+                .environmentObject(presence)
+                .environmentObject(proximity)
+                .environmentObject(noise)
                 .onAppear {
+                    ai.app = app
+                    noise.speech = speech
+                    // Someone came back to the desk: wake up.
+                    presence.onReturn = {
+                        night.setAway(false)
+                        app.registerTouch()
+                    }
+                    // Wave over the sensor near the earpiece.
+                    proximity.onWave = {
+                        if presence.isAway {
+                            presence.markPresent()
+                        } else if night.showNight {
+                            night.peek()
+                        } else if proximity.action == "talk" {
+                            assistant.listen()
+                        } else {
+                            app.registerTouch()
+                        }
+                    }
+                    presence.start()
+                    proximity.apply()
+                    noise.start()
                     assistant.configure(app: app, planner: planner, alarms: alarms, timer: quickTimer,
-                                        focus: focus, weather: weather, speech: speech, voice: voice)
+                                        focus: focus, weather: weather, speech: speech, voice: voice, ai: ai)
+                    ai.startDiscovery()
+                    ai.check()
                 }
         }
     }

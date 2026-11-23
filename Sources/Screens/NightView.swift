@@ -7,6 +7,7 @@ struct NightView: View {
     @EnvironmentObject private var weather: WeatherService
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var alarms: AlarmStore
+    @EnvironmentObject private var proximity: ProximityService
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -45,9 +46,9 @@ struct NightView: View {
                 VStack {
                     Spacer()
                     HStack(spacing: 8) {
-                        Image(systemName: "hand.tap.fill")
+                        Image(systemName: proximity.enabled ? "hand.wave.fill" : "hand.tap.fill")
                             .font(.system(size: 15))
-                        Text("Tap to brighten")
+                        Text(proximity.enabled ? "Wave or tap to brighten" : "Tap to brighten")
                     }
                     .font(.system(size: 15, weight: .semibold))
                     .opacity(0.85)

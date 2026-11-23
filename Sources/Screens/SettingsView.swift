@@ -116,6 +116,8 @@ struct SettingsView: View {
         case .display: DisplaySettings()
         case .alarms: AlarmsSoundsSettings()
         case .voice: VoiceSettings()
+        case .ai: AISettings()
+        case .sensors: SensorsSettings()
         case .today: TodaySettings()
         case .about: AboutSettings()
         default: PlannedSettings(section: section)
@@ -319,7 +321,7 @@ private struct AboutSettings: View {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "5.2 · iOS polish (motion, haptics, VoiceOver)"),
+                InfoRow(title: "Build step", value: "7 · Sensors (Away, wave, noise)"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])

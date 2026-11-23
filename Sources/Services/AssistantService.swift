@@ -11,7 +11,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
 
 /// Result card on the right of the answer screen (design: icon tile, title, detail, Edit / Undo).
 struct ActionCard: Equatable {
-    enum Kind { case reminder, task, timer, alarm, focus, info, weather, calendar }
+    enum Kind { case reminder, task, timer, alarm, focus, info, weather, calendar, ai, offline }
     enum Undo: Equatable { case reminder(String), task(String), alarm(UUID), timer, focus }
 
     let kind: Kind
@@ -24,7 +24,7 @@ struct ActionCard: Equatable {
 
 /// The voice assistant: listen → understand (offline rules) → act → reply (text + voice).
 final class AssistantService: ObservableObject {
-    enum Phase: Equatable { case idle, listening, answered, misheard, noPermission }
+    enum Phase: Equatable { case idle, listening, thinking, answered, misheard, noPermission }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var messages: [ChatMessage] = []
@@ -32,6 +32,10 @@ final class AssistantService: ObservableObject {
     @Published private(set) var heard = ""
     @Published private(set) var handledIn: TimeInterval = 0
     @Published private(set) var undone = false
+    /// Question being sent to the AI on the PC (shown while "Thinking…").
+    @Published private(set) var thinkingQuestion = ""
+    private var lastQuestion = ""
+    private var askTask: Task<Void, Never>?
 
     private var app: AppState?
     private var planner: PlannerService?
@@ -41,6 +45,7 @@ final class AssistantService: ObservableObject {
     private var weather: WeatherService?
     private var speech: SpeechService?
     private var voice: VoiceService?
+    private var ai: AIService?
 
     private static let historyKey = "assistant.history.v1"
 
@@ -54,7 +59,9 @@ final class AssistantService: ObservableObject {
     }
 
     func configure(app: AppState, planner: PlannerService, alarms: AlarmStore, timer: QuickTimer,
-                   focus: FocusTimer, weather: WeatherService, speech: SpeechService, voice: VoiceService) {
+                   focus: FocusTimer, weather: WeatherService, speech: SpeechService, voice: VoiceService,
+                   ai: AIService) {
+        self.ai = ai
         self.app = app
         self.planner = planner
         self.alarms = alarms
@@ -83,6 +90,7 @@ final class AssistantService: ObservableObject {
     func stopListening() { speech?.stop() }
 
     func cancelListening() {
+        askTask?.cancel()
         speech?.cancel()
         phase = messages.isEmpty ? .idle : .answered
     }
@@ -104,10 +112,16 @@ final class AssistantService: ObservableObject {
         let started = Date()
         let intent = CommandParser.parse(text)
         if intent == .unknown {
-            heard = text
-            phase = .misheard
-            Haptics.error()
-            voice?.speak("Sorry, I didn't understand. Try saying it another way.")
+            if let ai = ai, ai.isConfigured {
+                askAI(text)                       // a question for the AI on the PC
+            } else if Self.looksLikeQuestion(text) {
+                answerOffline(text, reason: "The AI on your PC isn't set up yet, so I can't answer questions. Timers, reminders, lists and calendar still work.")
+            } else {
+                heard = text
+                phase = .misheard
+                Haptics.error()
+                voice?.speak("Sorry, I didn't understand. Try saying it another way.")
+            }
             return
         }
         let reply = perform(intent)
@@ -123,6 +137,124 @@ final class AssistantService: ObservableObject {
             // Show the timer after the reply has been spoken.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.app?.screen = .focus }
         }
+    }
+
+    // MARK: Local AI (Desk Bridge on the PC)
+
+    private func askAI(_ question: String) {
+        guard let ai = ai, let voice = voice else { return }
+        lastQuestion = question
+        thinkingQuestion = question
+        phase = .thinking
+        undone = false
+        let history = messages
+        append(ChatMessage(fromUser: true, text: question, source: nil, date: Date()))
+        let answerID = UUID()
+        var started = false
+        voice.beginStream()
+        askTask?.cancel()
+        askTask = Task { [weak self] in
+            do {
+                let result = try await ai.ask(question, context: self?.aiContext() ?? [:], history: history) { piece in
+                    guard let self = self else { return }
+                    if !started {
+                        started = true
+                        self.messages.append(ChatMessage(id: answerID, fromUser: false, text: piece, source: "ai", date: Date()))
+                        self.phase = .answered
+                        self.card = nil
+                    } else if let index = self.messages.lastIndex(where: { $0.id == answerID }) {
+                        let old = self.messages[index]
+                        self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: old.text + piece,
+                                                           source: "ai", date: old.date)
+                    }
+                    voice.appendStream(piece)
+                }
+                await MainActor.run {
+                    guard let self = self else { return }
+                    voice.endStream()
+                    if let index = self.messages.lastIndex(where: { $0.id == answerID }) {
+                        self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: result.answer,
+                                                           source: "ai", date: self.messages[index].date)
+                    } else {
+                        self.messages.append(ChatMessage(id: answerID, fromUser: false, text: result.answer,
+                                                         source: "ai", date: Date()))
+                    }
+                    self.handledIn = Double(result.ms) / 1000
+                    self.card = ActionCard(kind: .ai, heading: "Local AI", title: ai.model.isEmpty ? "Claude" : ai.model,
+                                           detail: "On \(ai.serverName.isEmpty ? "your PC" : ai.serverName)",
+                                           undo: nil, canEdit: false)
+                    self.phase = .answered
+                    self.saveHistory()
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self = self else { return }
+                    voice.stop()
+                    // Drop a half-streamed answer, then show the offline state.
+                    self.messages.removeAll { $0.id == answerID }
+                    if let last = self.messages.last, last.fromUser, last.text == question { self.messages.removeLast() }
+                    let reason: String
+                    switch error as? AIService.AIError {
+                    case .wrongCode?:
+                        reason = "The pairing code doesn't match your PC. Check it in Settings, AI and Network."
+                    case .server(let message)?:
+                        reason = "The AI on your PC had a problem: \(message)"
+                    default:
+                        reason = "I can't reach the AI on your PC right now, so I can't answer questions. Timers, reminders, lists and calendar still work."
+                    }
+                    self.answerOffline(question, reason: reason)
+                }
+            }
+        }
+    }
+
+    /// S1: the PC can't be reached (or isn't set up). Offline commands keep working.
+    private func answerOffline(_ question: String, reason: String) {
+        lastQuestion = question
+        append(ChatMessage(fromUser: true, text: question, source: nil, date: Date()))
+        append(ChatMessage(fromUser: false, text: reason, source: "offline", date: Date()))
+        let configured = ai?.isConfigured ?? false
+        let name = (ai?.serverName.isEmpty ?? true) ? "Your PC" : "“\(ai?.serverName ?? "")”"
+        var detail = configured ? "\(name) isn't reachable on Wi-Fi." : "Start Desk Bridge on your PC, then enter the pairing code."
+        if configured, let seen = ai?.lastSeen { detail += " Last seen \(TimeText.time(seen))." }
+        card = ActionCard(kind: .offline, heading: configured ? "Local AI offline" : "Local AI not set up",
+                          title: configured ? "PC not found" : "Set up the AI", detail: detail,
+                          undo: nil, canEdit: false)
+        phase = .answered
+        Haptics.error()
+        voice?.speak(reason)
+    }
+
+    func retryLastQuestion() {
+        guard !lastQuestion.isEmpty else { return }
+        // Remove the offline exchange, then ask again.
+        if let last = messages.last, last.source == "offline", !last.fromUser { messages.removeLast() }
+        if let last = messages.last, last.fromUser, last.text == lastQuestion { messages.removeLast() }
+        ai?.check()
+        let question = lastQuestion
+        if let ai = ai, ai.isConfigured { askAI(question) } else { answerOffline(question, reason: "The AI on your PC still isn't set up.") }
+    }
+
+    func openAISettings() {
+        app?.pendingSettingsSection = "ai"
+        app?.screen = .settings
+    }
+
+    private func aiContext() -> [String: String] {
+        let now = Date()
+        var context = ["date": DateText.long(now), "time": TimeText.time(now)]
+        if let w = weather?.snapshot {
+            context["weather"] = "\(Int(w.temperature.rounded())) degrees, \(WeatherCode.text(w.code).lowercased()), high \(Int(w.high.rounded())), low \(Int(w.low.rounded()))"
+        }
+        return context
+    }
+
+    private static func looksLikeQuestion(_ text: String) -> Bool {
+        let t = text.lowercased().trimmingCharacters(in: .whitespaces)
+        if t.hasSuffix("?") { return true }
+        let starts = ["what", "why", "how", "who", "when", "where", "which", "can ", "could ", "should ", "would ",
+                      "is ", "are ", "do ", "does ", "did ", "tell me", "explain", "give me", "suggest", "write"]
+        return starts.contains { t.hasPrefix($0) }
     }
 
     private func perform(_ intent: VoiceIntent) -> (text: String, card: ActionCard?) {
@@ -326,10 +458,15 @@ final class AssistantService: ObservableObject {
         card = nil
         phase = .idle
         UserDefaults.standard.removeObject(forKey: Self.historyKey)
+        ai?.reset()                                   // fresh conversation on the PC too
     }
 
     private func append(_ message: ChatMessage) {
         messages.append(message)
+        saveHistory()
+    }
+
+    private func saveHistory() {
         if messages.count > 40 { messages.removeFirst(messages.count - 40) }
         if let data = try? JSONEncoder().encode(messages) {
             UserDefaults.standard.set(data, forKey: Self.historyKey)

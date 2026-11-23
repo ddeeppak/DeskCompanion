@@ -12,6 +12,7 @@ struct AssistantView: View {
             switch assistant.phase {
             case .idle: IdleView()
             case .listening: ListeningView()
+            case .thinking: ThinkingView()
             case .answered: AnswerView()
             case .misheard: MisheardView()
             case .noPermission: NoPermissionView()
@@ -250,6 +251,41 @@ private struct ListeningView: View {
     }
 }
 
+// MARK: - Thinking (question sent to the AI on the PC)
+
+private struct ThinkingView: View {
+    @EnvironmentObject private var assistant: AssistantService
+    @EnvironmentObject private var ai: AIService
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(spacing: 10) {
+            AssistantOrb(active: false)
+                .padding(.bottom, 6)
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Thinking…")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(theme.accent)
+            }
+            Text("“\(assistant.thinkingQuestion)”")
+                .font(.system(size: 24, weight: .bold))
+                .tracking(-24 * 0.015)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: 540)
+            HStack(spacing: 6) {
+                Image(systemName: "desktopcomputer").font(.system(size: 13))
+                Text("Asking \(ai.model.isEmpty ? "Claude" : ai.model) on \(ai.serverName.isEmpty ? "your PC" : ai.serverName)")
+            }
+            .font(.system(size: 13, weight: .bold))
+            .foregroundColor(theme.secondaryLabel)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // MARK: - S5 Didn't catch that
 
 private struct MisheardView: View {
@@ -311,6 +347,7 @@ private struct MisheardView: View {
 private struct AnswerView: View {
     @EnvironmentObject private var assistant: AssistantService
     @EnvironmentObject private var voice: VoiceService
+    @EnvironmentObject private var ai: AIService
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -427,8 +464,15 @@ private struct AnswerView: View {
     }
 
     private var footnote: String {
-        let seconds = max(0.1, assistant.handledIn)
-        return "Handled on this iPhone in \(String(format: "%.1f", seconds)) s. General questions go to the AI on your PC (coming in step 6)."
+        let seconds = String(format: "%.1f", max(0.1, assistant.handledIn))
+        switch assistant.messages.last?.source ?? "" {
+        case "ai":
+            return "Answered by \(ai.model.isEmpty ? "Claude" : ai.model) on \(ai.serverName.isEmpty ? "your PC" : ai.serverName) in \(seconds) s."
+        case "offline" where assistant.card?.kind == .offline:
+            return "Still works offline: timers, reminders, lists, calendar and weather."
+        default:
+            return "Handled on this iPhone in \(seconds) s. General questions go to the AI on your PC."
+        }
     }
 }
 
@@ -449,7 +493,7 @@ private struct ResultCard: View {
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tint))
                 Text(assistant.undone ? "Undone" : card.heading)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(theme.secondaryLabel)
+                    .foregroundColor(card.kind == .offline ? theme.red : theme.secondaryLabel)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if card.undo != nil && !assistant.undone {
@@ -468,7 +512,13 @@ private struct ResultCard: View {
                 .font(.system(size: 15).monospacedDigit())
                 .foregroundColor(theme.secondaryLabel)
                 .lineLimit(2)
-            if (card.canEdit || card.undo != nil) && !assistant.undone {
+            if card.kind == .offline {
+                HStack(spacing: 8) {
+                    tinted("Retry", symbol: "arrow.clockwise") { assistant.retryLastQuestion() }
+                    tinted("Setup", symbol: "gearshape") { assistant.openAISettings() }
+                }
+                .padding(.top, 12)
+            } else if (card.canEdit || card.undo != nil) && !assistant.undone {
                 HStack(spacing: 8) {
                     if card.canEdit {
                         tinted("Edit", symbol: "pencil") { assistant.edit() }
@@ -507,6 +557,8 @@ private struct ResultCard: View {
         case .weather: return "cloud.sun.fill"
         case .calendar: return "calendar"
         case .info: return "info"
+        case .ai: return "desktopcomputer"
+        case .offline: return "wifi.slash"
         }
     }
 
@@ -520,6 +572,8 @@ private struct ResultCard: View {
         case .weather: return theme.accent2
         case .calendar: return theme.red
         case .info: return theme.indigo
+        case .ai: return theme.accent
+        case .offline: return theme.red
         }
     }
 }

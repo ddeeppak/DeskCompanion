@@ -10,10 +10,13 @@ final class NightMode: ObservableObject {
     @Published var brightness: Double {                                     // 0.01 ... 0.4
         didSet {
             save()
-            if showNight { UIScreen.main.brightness = CGFloat(brightness) }
+            if showNight || away { applyBrightness() }
         }
     }
     @Published private(set) var showNight = false
+    /// Nobody at the desk (front camera): dim, like night but a little brighter.
+    @Published private(set) var away = false
+    private let awayBrightness = 0.08
 
     private var peekUntil: Date?
     private var previewUntil: Date?
@@ -72,13 +75,27 @@ final class NightMode: ObservableObject {
         }
     }
 
-    /// App back in the foreground: dim again if it's night.
+    /// App back in the foreground: dim again if it's night or nobody is here.
     func appBecameActive() {
-        if showNight {
-            if savedBrightness == nil { savedBrightness = UIScreen.main.brightness }
-            UIScreen.main.brightness = CGFloat(brightness)
-        }
+        applyBrightness()
         evaluate()
+    }
+
+    func setAway(_ on: Bool) {
+        guard on != away else { return }
+        away = on
+        applyBrightness()
+    }
+
+    /// Night → night brightness; Away → dim; otherwise the user's own brightness.
+    private func applyBrightness() {
+        let dim: Double? = showNight ? brightness : (away ? max(brightness, awayBrightness) : nil)
+        if let dim = dim {
+            if savedBrightness == nil { savedBrightness = UIScreen.main.brightness }
+            UIScreen.main.brightness = CGFloat(dim)
+        } else {
+            restoreBrightness()
+        }
     }
 
     private func recheck(after seconds: TimeInterval) {
@@ -90,12 +107,7 @@ final class NightMode: ObservableObject {
     private func setShowNight(_ value: Bool) {
         guard value != showNight else { return }
         showNight = value
-        if value {
-            if savedBrightness == nil { savedBrightness = UIScreen.main.brightness }
-            UIScreen.main.brightness = CGFloat(brightness)
-        } else {
-            restoreBrightness()
-        }
+        applyBrightness()
     }
 
     private func save() {

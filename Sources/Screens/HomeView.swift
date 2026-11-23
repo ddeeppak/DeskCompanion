@@ -109,6 +109,7 @@ enum DateText {
 private struct SensorRow: View {
     @EnvironmentObject private var weather: WeatherService
     @EnvironmentObject private var pressure: PressureService
+    @EnvironmentObject private var noise: NoiseMeter
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -119,7 +120,7 @@ private struct SensorRow: View {
             item(symbol: "sunset.fill", tint: nil,
                  value: snapshot.map { TimeText.clock($0.sunset) } ?? "--:--", label: "Sunset")
             item(symbol: "waveform", tint: theme.green,
-                 value: "--", label: "Noise")                       // noise meter arrives in step 7
+                 value: noise.decibels.map { "\($0) dB" } ?? "--", label: noise.levelText)
             item(symbol: "gauge", tint: theme.accent2,
                  value: pressureValue(snapshot), label: pressureLabel)
         }

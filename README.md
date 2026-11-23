@@ -23,6 +23,6 @@ Design: `../design/claude-design-v1/` · Plan: `../desk-companion-backlog.md`
 - [x] Step 4: Focus timer (ring, presets, custom, sounds, chime, session done)
 - [x] Alarms (in-app, with backup notification) + custom focus sounds
 - [x] Step 5: Voice assistant (offline): speech, spoken replies, timers, alarms, reminders, lists, agenda, weather, focus, undo
-- [ ] Step 6: Local AI on PC
-- [ ] Step 7: Sensors
+- [x] Step 6: Local AI on PC: Desk Bridge (Claude Code, Haiku, low effort, warm streaming session), auto-discovery, pairing code
+- [x] Step 7: Sensors: Away mode (front camera, on-device), wave to talk/brighten (proximity), noise meter
 - [ ] Step 8: Polish

@@ -11,6 +11,10 @@ struct RootView: View {
     @EnvironmentObject private var alarms: AlarmStore
     @EnvironmentObject private var library: SoundLibrary
     @EnvironmentObject private var quickTimer: QuickTimer
+    @EnvironmentObject private var ai: AIService
+    @EnvironmentObject private var presence: PresenceService
+    @EnvironmentObject private var proximity: ProximityService
+    @EnvironmentObject private var noise: NoiseMeter
     // Note: RootView deliberately does not observe FocusTimer (it ticks twice a second).
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -47,6 +51,8 @@ struct RootView: View {
             overlays
         }
         .animation(.easeInOut(duration: 0.6), value: night.showNight)
+        .animation(.easeInOut(duration: 0.8), value: presence.isAway)
+        .onChange(of: presence.isAway) { away in night.setAway(away) }
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: planner.alert)
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: quickTimer.ringing)
         .animation(.easeInOut(duration: 0.4), value: alarms.ringing)
@@ -57,7 +63,11 @@ struct RootView: View {
         .onAppear {
             // Any touch brings the rail back and restarts the 30 s timer (watched at window level so scrolling works).
             let model = app
-            TouchWatcher.install { model.touchBegan() }
+            let people = presence
+            TouchWatcher.install {
+                model.touchBegan()
+                people.markPresent()          // a touch means someone is here
+            }
             // Desk display: never auto-lock while the app is open.
             UIApplication.shared.isIdleTimerDisabled = true
             app.scheduleRailHide()
@@ -72,6 +82,7 @@ struct RootView: View {
             location.refreshIfStale()
             weather.refreshIfNeeded(location: location.location)
             planner.refresh()
+            ai.check()
         }
         .onReceive(alertTimer) { _ in
             planner.checkAlerts()
@@ -111,14 +122,22 @@ struct RootView: View {
                 UIApplication.shared.isIdleTimerDisabled = true
                 library.rescan()          // pick up files copied with iTunes File Sharing
                 alarms.check()
+                ai.startDiscovery()
+                ai.check()
                 app.registerTouch()
                 night.appBecameActive()
                 pressure.start()
                 weather.refreshIfNeeded(location: location.location)
                 planner.refresh()
+                presence.start()
+                proximity.apply()
+                noise.start()
             case .background:
                 night.restoreBrightness()
                 pressure.stop()
+                presence.suspend()
+                proximity.suspend()
+                noise.stop()
             default:
                 break
             }
@@ -130,6 +149,10 @@ struct RootView: View {
     private var overlays: some View {
         if night.showNight {
             NightView()
+                .transition(.opacity)
+                .zIndex(1)
+        } else if presence.isAway {
+            AwayView()
                 .transition(.opacity)
                 .zIndex(1)
         }

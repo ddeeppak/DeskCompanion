@@ -4,3 +4,7 @@ Payload/
 *.ipa
 build.log
 .DS_Store
+
+# Desk Bridge local config (pairing code)
+bridge/bridge_config.local.json
+bridge/__pycache__/
