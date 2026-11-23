@@ -1,0 +1,35 @@
+# XcodeGen config: the GitHub cloud Mac turns this into an Xcode project.
+name: DeskCompanion
+
+options:
+  deploymentTarget:
+    iOS: "15.0"            # iPhone 7 Plus max is iOS 15.8.x
+
+targets:
+  DeskCompanion:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.deskcompanion.u7k3q2
+        PRODUCT_NAME: DeskCompanion
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "Desk Companion"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # Landscape only, both directions (Home button left or right)
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UIRequiresFullScreen: YES
+        INFOPLIST_KEY_UIStatusBarHidden: YES
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        # Sideloadly signs the app later with your Apple ID
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""

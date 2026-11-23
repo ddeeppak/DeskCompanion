@@ -1,0 +1,55 @@
+# Builds an unsigned .ipa on a free GitHub cloud Mac on every push.
+# Download: repo -> Actions -> latest run -> Artifacts.
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15          # change to macos-latest if this image is retired
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DeskCompanion.xcodeproj \
+            -scheme DeskCompanion \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Build/Products/Release-iphoneos/DeskCompanion.app
+
+      - name: Show compile errors
+        if: failure()
+        run: grep -E "error:" build.log | head -50 || true
+
+      - name: Package .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/DeskCompanion.app Payload/
+          zip -qry DeskCompanion.ipa Payload
+          ls -lh DeskCompanion.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeskCompanion-ipa
+          path: DeskCompanion.ipa
+          retention-days: 30
