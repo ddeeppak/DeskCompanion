@@ -44,6 +44,11 @@ final class AIService: ObservableObject {
         }
     }
 
+    /// Send today's event titles and open tasks with each question, so the AI can plan with you.
+    @Published var shareDay: Bool {
+        didSet { UserDefaults.standard.set(shareDay, forKey: "ai.shareDay") }
+    }
+
     let port = 8765
     weak var app: AppState?
 
@@ -57,6 +62,7 @@ final class AIService: ObservableObject {
     init() {
         let d = UserDefaults.standard
         code = d.string(forKey: Self.codeKey) ?? ""
+        shareDay = d.object(forKey: "ai.shareDay") as? Bool ?? true
         manualHost = d.string(forKey: Self.manualKey) ?? ""
         let saved = d.string(forKey: Self.manualKey).flatMap { $0.isEmpty ? nil : $0 } ?? d.string(forKey: Self.hostKey)
         host = saved
@@ -222,6 +228,39 @@ final class AIService: ObservableObject {
             self.setState(.online)
         }
         return (answer.trimmingCharacters(in: .whitespacesAndNewlines), ms)
+    }
+
+    // MARK: Long-term memory (stored on the PC)
+
+    @Published private(set) var memories: [String] = []
+
+    func loadMemories() {
+        memoryRequest(method: "GET", body: nil)
+    }
+
+    func removeMemory(_ fact: String) {
+        memoryRequest(method: "POST", body: ["remove": fact])
+    }
+
+    func clearMemories() {
+        memoryRequest(method: "POST", body: ["clear": true])
+    }
+
+    private func memoryRequest(method: String, body: [String: Any]?) {
+        guard isConfigured, let url = url("/memory") else { return }
+        var request = URLRequest(url: url, timeoutInterval: 5)
+        request.httpMethod = method
+        request.setValue(code, forHTTPHeaderField: "X-Desk-Code")
+        if let body = body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let facts = json["facts"] as? [String] else { return }
+            DispatchQueue.main.async { self?.memories = facts }
+        }.resume()
     }
 
     /// Fresh conversation on the PC (after "Clear conversation").

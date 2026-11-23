@@ -15,6 +15,7 @@ struct RootView: View {
     @EnvironmentObject private var presence: PresenceService
     @EnvironmentObject private var proximity: ProximityService
     @EnvironmentObject private var noise: NoiseMeter
+    @EnvironmentObject private var briefing: BriefingService
     // Note: RootView deliberately does not observe FocusTimer (it ticks twice a second).
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -56,6 +57,7 @@ struct RootView: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: planner.alert)
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: quickTimer.ringing)
         .animation(.easeInOut(duration: 0.4), value: alarms.ringing)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: briefing.announcement)
         .environment(\.theme, theme)
         .foregroundColor(theme.label)
         .preferredColorScheme(.dark)
@@ -83,6 +85,7 @@ struct RootView: View {
             weather.refreshIfNeeded(location: location.location)
             planner.refresh()
             ai.check()
+            briefing.check()
         }
         .onReceive(alertTimer) { _ in
             planner.checkAlerts()
@@ -174,6 +177,14 @@ struct RootView: View {
                         onPrimary: { Haptics.tap(); withAnimation { quickTimer.stopRinging() } })
                 .transition(bannerTransition)
                 .zIndex(2)
+        }
+
+        if let text = briefing.announcement, !night.showNight, alarms.ringing == nil, planner.alert == nil {
+            AnnouncementBanner(text: text, symbol: briefing.announcementSymbol) {
+                withAnimation { briefing.dismiss() }
+            }
+            .transition(bannerTransition)
+            .zIndex(2)
         }
 
         if let alarm = alarms.ringing {

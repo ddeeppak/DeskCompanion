@@ -23,6 +23,7 @@ struct DeskCompanionApp: App {
     @StateObject private var presence = PresenceService()
     @StateObject private var proximity = ProximityService()
     @StateObject private var noise = NoiseMeter()
+    @StateObject private var briefing = BriefingService()
 
     init() {
         // Alarms ring inside the app; the backup notification is only for when the app isn't open.
@@ -55,13 +56,18 @@ struct DeskCompanionApp: App {
                 .environmentObject(presence)
                 .environmentObject(proximity)
                 .environmentObject(noise)
+                .environmentObject(briefing)
                 .onAppear {
                     ai.app = app
                     noise.speech = speech
                     // Someone came back to the desk: wake up.
+                    briefing.configure(planner: planner, weather: weather, focus: focus, presence: presence,
+                                       night: night, voice: voice, speech: speech, habits: habits)
                     presence.onReturn = {
                         night.setAway(false)
                         app.registerTouch()
+                        // Morning briefing / evening wrap-up when you sit down.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { briefing.check() }
                     }
                     // Wave over the sensor near the earpiece.
                     proximity.onWave = {

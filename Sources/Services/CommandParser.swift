@@ -14,6 +14,9 @@ enum VoiceIntent: Equatable {
     case startFocus(minutes: Int?)
     case stopFocus
     case help
+    case tasks
+    /// Alarm or timer asked without a time ("set an alarm"): ask for it, then listen.
+    case needsTime(kind: String)
     case unknown
 }
 
@@ -30,19 +33,26 @@ enum CommandParser {
         }
         if t.contains("timer") || t.hasPrefix("count down") {
             let seconds = durationSeconds(t)
-            return seconds > 0 ? .timer(seconds: seconds) : .unknown
+            return seconds > 0 ? .timer(seconds: seconds) : .needsTime(kind: "timer")
         }
         if contains(t, ["remind me", "reminder"]) {
             return reminder(t, now: now)
         }
         if t.contains("alarm") || t.contains("wake me") {
-            guard let clock = clockTime(t),
+            // "alarm at 6:30", "alarm to 430", "alarm 7", "wake me at 6 30 am"
+            guard let clock = clockTime(t) ?? bareTime(t),
                   let date = resolve(clock, dayOffset: 0, tonight: t.contains("tonight"),
-                                     preferMorning: true, now: now) else { return .unknown }
+                                     preferMorning: (t.contains("wake me") || t.contains("morning")) && !t.contains("pm"),
+                                     now: now) else {
+                return .needsTime(kind: "alarm")
+            }
             let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
             return .alarm(hour: parts.hour ?? 7, minute: parts.minute ?? 0)
         }
         if let item = listItem(t) { return .addTask(item) }
+        if contains(t, ["task", "to do", "todo", "my list", "need to do", "have to do", "my reminders", "pending"]) {
+            return .tasks
+        }
         if contains(t, ["what can you do", "help me", "what do you do"]) || t == "help" { return .help }
         if contains(t, ["stop focus", "pause focus", "end focus", "stop the focus", "end the focus", "stop pomodoro"]) {
             return .stopFocus
@@ -135,7 +145,8 @@ enum CommandParser {
 
     static func clockTime(_ t: String) -> ClockTime? {
         let patterns = [
-            #"\b(?:at|for|by)\s+(\d{1,2})(?::(\d{2})|\s(\d{2}))?\s*(am|pm)?\b"#,
+            #"\b(?:at|for|by|to|on)\s+(\d{1,2})(?::(\d{2})|\s(\d{2}))?\s*(am|pm)?\b"#,
+            #"\b(?:at|for|by|to|on)\s+(\d{1,2})(\d{2})()\s*(am|pm)?\b"#,
             #"\b(\d{1,2}):(\d{2})()\s*(am|pm)?\b"#,
             #"\b(\d{1,2})()()\s*(am|pm)\b"#
         ]
@@ -154,6 +165,25 @@ enum CommandParser {
             if let range = t.range(of: word) {
                 return ClockTime(hour: hour, minute: 0, meridiem: hour == 0 ? "am" : "pm", range: range)
             }
+        }
+        return nil
+    }
+
+    /// Any time-looking number, for alarms: "7", "430", "1630", "6 30", "6:30 pm".
+    static func bareTime(_ t: String) -> ClockTime? {
+        let patterns = [
+            #"\b(\d{1,2}):(\d{2})()\s*(am|pm)?\b"#,
+            #"\b(\d{1,2})(\d{2})()\s*(am|pm)?\b"#,
+            #"\b(\d{1,2})\s(\d{2})()\s*(am|pm)?\b"#,
+            #"\b(\d{1,2})()()\s*(am|pm)?\b"#
+        ]
+        for pattern in patterns {
+            guard let found = firstMatch(pattern, in: t) else { continue }
+            let groups = found.0
+            guard let hour = Int(groups[1]), hour <= 23 else { continue }
+            let minute = Int(groups[2]) ?? 0
+            guard minute < 60 else { continue }
+            return ClockTime(hour: hour, minute: minute, meridiem: groups[4].isEmpty ? nil : groups[4], range: found.1)
         }
         return nil
     }

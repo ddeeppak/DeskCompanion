@@ -34,8 +34,21 @@ final class AssistantService: ObservableObject {
     @Published private(set) var undone = false
     /// Question being sent to the AI on the PC (shown while "Thinking…").
     @Published private(set) var thinkingQuestion = ""
+    /// What the AI is doing right now ("Checking your calendar…"), shown under "Thinking…".
+    @Published private(set) var thinkingStatus = ""
     private var lastQuestion = ""
+    /// After "For what time?", the next thing you say completes this ("set an alarm for" + "4:30").
+    private var pendingPrefix: String?
     private var askTask: Task<Void, Never>?
+
+    /// Conversation mode: after an answer is spoken, listen again for a few seconds for a follow-up.
+    @Published var keepListening: Bool {
+        didSet { UserDefaults.standard.set(keepListening, forKey: "assistant.keepListening") }
+    }
+    /// True while listening for a follow-up (quietly gives up if nothing is said).
+    @Published private(set) var isFollowUp = false
+    private var followUpArmed = false
+    private var cancellables = Set<AnyCancellable>()
 
     private var app: AppState?
     private var planner: PlannerService?
@@ -50,6 +63,7 @@ final class AssistantService: ObservableObject {
     private static let historyKey = "assistant.history.v1"
 
     init() {
+        keepListening = UserDefaults.standard.object(forKey: "assistant.keepListening") as? Bool ?? true
         // Keep only today's conversation.
         if let data = UserDefaults.standard.data(forKey: Self.historyKey),
            let saved = try? JSONDecoder().decode([ChatMessage].self, from: data) {
@@ -70,21 +84,46 @@ final class AssistantService: ObservableObject {
         self.weather = weather
         self.speech = speech
         self.voice = voice
+        // When the voice finishes speaking an answer, listen for a follow-up.
+        voice.$speaking
+            .removeDuplicates()
+            .filter { !$0 }
+            .debounce(for: .milliseconds(350), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.speakingEnded() }
+            .store(in: &cancellables)
+    }
+
+    /// Call right before speaking an answer that may have a follow-up.
+    private func armFollowUp() {
+        followUpArmed = keepListening
+        if keepListening, !(voice?.enabled ?? true) {
+            // Replies aren't spoken, so there is no "finished speaking" moment: listen shortly after the answer.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.speakingEnded() }
+        }
+    }
+
+    private func speakingEnded() {
+        guard followUpArmed else { return }
+        followUpArmed = false
+        guard phase == .answered, app?.screen == .assistant, !(speech?.isListening ?? true) else { return }
+        listen(followUp: true)
     }
 
     // MARK: Listening
 
-    func listen() {
+    func listen(followUp: Bool = false) {
         guard let speech = speech, !speech.isListening else { return }
+        followUpArmed = false
         voice?.stop()
-        Haptics.tap()                      // before the mic opens
+        if !followUp { Haptics.tap() }     // before the mic opens
+        isFollowUp = followUp
         app?.screen = .assistant
         phase = .listening
         speech.start(onFinish: { [weak self] text in
             self?.received(text)
         }, onDenied: { [weak self] in
             self?.phase = .noPermission
-        })
+        }, noSpeechTimeout: followUp ? 5 : 7)
     }
 
     func stopListening() { speech?.stop() }
@@ -96,7 +135,15 @@ final class AssistantService: ObservableObject {
     }
 
     private func received(_ text: String) {
+        let wasFollowUp = isFollowUp
+        isFollowUp = false
         if text.isEmpty {
+            if wasFollowUp {
+                // Nothing more was said: quietly go back to the answer.
+                pendingPrefix = nil
+                phase = messages.isEmpty ? .idle : .answered
+                return
+            }
             heard = ""
             phase = .misheard
             Haptics.error()
@@ -108,7 +155,12 @@ final class AssistantService: ObservableObject {
     // MARK: Understanding + acting
 
     /// Also used by the suggestion chips.
-    func handle(_ text: String) {
+    func handle(_ spoken: String) {
+        var text = spoken
+        if let prefix = pendingPrefix {
+            pendingPrefix = nil
+            text = "\(prefix) \(spoken)"
+        }
         let started = Date()
         let intent = CommandParser.parse(text)
         if intent == .unknown {
@@ -132,6 +184,13 @@ final class AssistantService: ObservableObject {
         card = reply.card
         phase = .answered
         if reply.card?.undo != nil { Haptics.success() }
+        if case .needsTime = intent {
+            followUpArmed = true            // "For what time?": always listen for the answer
+        } else if case .startFocus = intent {
+            followUpArmed = false           // switching to the Focus screen
+        } else {
+            armFollowUp()
+        }
         voice?.speak(reply.text)
         if case .startFocus = intent {
             // Show the timer after the reply has been spoken.
@@ -141,36 +200,87 @@ final class AssistantService: ObservableObject {
 
     // MARK: Local AI (Desk Bridge on the PC)
 
-    private func askAI(_ question: String) {
+    /// Round 0 is your question. Later rounds send lookup RESULTS back to the AI (up to 3 rounds).
+    private func askAI(_ question: String, round: Int = 0) {
         guard let ai = ai, let voice = voice else { return }
-        lastQuestion = question
-        thinkingQuestion = question
+        let history = round == 0 ? messages : []
+        if round == 0 {
+            lastQuestion = question
+            thinkingQuestion = question
+            thinkingStatus = ""
+            append(ChatMessage(fromUser: true, text: question, source: nil, date: Date()))
+        }
         phase = .thinking
         undone = false
-        let history = messages
-        append(ChatMessage(fromUser: true, text: question, source: nil, date: Date()))
         let answerID = UUID()
         var started = false
+        var fullText = ""            // everything received so far
+        var shownCount = 0           // characters already shown and spoken
+        var isAction = false         // an ACTION line appeared: stop speaking, carry it out at the end
+        let holdBack = 6             // never speak the last 6 characters yet: they might be the start of "ACTION"
+
+        /// Shows and speaks one more piece of a normal (non-action) answer.
+        let show: (String) -> Void = { [weak self] piece in
+            guard let self = self, !piece.isEmpty else { return }
+            if !started {
+                started = true
+                self.messages.append(ChatMessage(id: answerID, fromUser: false, text: piece, source: "ai", date: Date()))
+                self.phase = .answered
+                self.card = nil
+            } else if let index = self.messages.lastIndex(where: { $0.id == answerID }) {
+                let old = self.messages[index]
+                self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: old.text + piece,
+                                                   source: "ai", date: old.date)
+            }
+            voice.appendStream(piece)
+        }
+
         voice.beginStream()
         askTask?.cancel()
         askTask = Task { [weak self] in
             do {
-                let result = try await ai.ask(question, context: self?.aiContext() ?? [:], history: history) { piece in
-                    guard let self = self else { return }
-                    if !started {
-                        started = true
-                        self.messages.append(ChatMessage(id: answerID, fromUser: false, text: piece, source: "ai", date: Date()))
-                        self.phase = .answered
-                        self.card = nil
-                    } else if let index = self.messages.lastIndex(where: { $0.id == answerID }) {
-                        let old = self.messages[index]
-                        self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: old.text + piece,
-                                                           source: "ai", date: old.date)
+                let result = try await ai.ask(question, context: self?.aiContext() ?? [:], history: history) { incoming in
+                    fullText += incoming
+                    guard !isAction else { return }
+                    if fullText.range(of: "ACTION") != nil || fullText.range(of: "QUERY") != nil {
+                        isAction = true
+                        voice.stop()
+                        return
                     }
-                    voice.appendStream(piece)
+                    let safe = fullText.count - holdBack
+                    guard safe > shownCount else { return }
+                    let from = fullText.index(fullText.startIndex, offsetBy: shownCount)
+                    let to = fullText.index(fullText.startIndex, offsetBy: safe)
+                    shownCount = safe
+                    show(String(fullText[from..<to]))
                 }
                 await MainActor.run {
                     guard let self = self else { return }
+                    if result.answer.contains("QUERY") {
+                        // The AI needs to look something up: answer its lookups and send the results back.
+                        voice.stop()
+                        self.messages.removeAll { $0.id == answerID }
+                        guard round < 3 else {
+                            self.append(ChatMessage(fromUser: false, text: "Sorry, I couldn't finish that.", source: "ai", date: Date()))
+                            self.phase = .answered
+                            voice.speak("Sorry, I couldn't finish that.")
+                            return
+                        }
+                        let results = self.runQueries(result.answer)
+                        self.askAI(results, round: round + 1)
+                        return
+                    }
+                    if isAction || result.answer.contains("ACTION") {
+                        voice.stop()
+                        self.messages.removeAll { $0.id == answerID }     // drop any explanation shown before the action
+                        self.performAIAction(result.answer, question: question, ms: result.ms)
+                        return
+                    }
+                    if shownCount < fullText.count {                      // the held-back tail
+                        show(String(fullText[fullText.index(fullText.startIndex, offsetBy: shownCount)...]))
+                        shownCount = fullText.count
+                    }
+                    self.armFollowUp()
                     voice.endStream()
                     if let index = self.messages.lastIndex(where: { $0.id == answerID }) {
                         self.messages[index] = ChatMessage(id: answerID, fromUser: false, text: result.answer,
@@ -191,8 +301,9 @@ final class AssistantService: ObservableObject {
                     guard let self = self else { return }
                     voice.stop()
                     // Drop a half-streamed answer, then show the offline state.
+                    let asked = round == 0 ? question : self.lastQuestion
                     self.messages.removeAll { $0.id == answerID }
-                    if let last = self.messages.last, last.fromUser, last.text == question { self.messages.removeLast() }
+                    if let last = self.messages.last, last.fromUser, last.text == asked { self.messages.removeLast() }
                     let reason: String
                     switch error as? AIService.AIError {
                     case .wrongCode?:
@@ -202,10 +313,214 @@ final class AssistantService: ObservableObject {
                     default:
                         reason = "I can't reach the AI on your PC right now, so I can't answer questions. Timers, reminders, lists and calendar still work."
                     }
-                    self.answerOffline(question, reason: reason)
+                    self.answerOffline(asked, reason: reason)
                 }
             }
         }
+    }
+
+    /// The AI replied with one or more `ACTION {json}` lines: run each like the phone's own commands.
+    private func performAIAction(_ raw: String, question: String, ms: Int) {
+        let lines = raw.components(separatedBy: .newlines).filter { $0.contains("ACTION") }
+        var intents: [VoiceIntent] = []
+        var direct: [(text: String, card: ActionCard?)] = []
+        for line in lines {
+            if let intent = Self.intent(fromActionLine: line) {
+                intents.append(intent)
+            } else if let reply = extraAction(line) {
+                direct.append(reply)
+            }
+        }
+        // The question was already added to the conversation.
+        guard !intents.isEmpty || !direct.isEmpty else {
+            append(ChatMessage(fromUser: false, text: "Sorry, I couldn't do that.", source: "ai", date: Date()))
+            card = nil
+            phase = .answered
+            voice?.speak("Sorry, I couldn't do that.")
+            return
+        }
+        let replies = intents.map { perform($0) } + direct
+        let text = replies.map { $0.text }.joined(separator: " ")
+        handledIn = Double(ms) / 1000
+        undone = false
+        append(ChatMessage(fromUser: false, text: text, source: "ai", date: Date()))
+        card = replies.last?.card
+        phase = .answered
+        if replies.contains(where: { $0.card?.undo != nil }) { Haptics.success() }
+        armFollowUp()
+        voice?.speak(text)
+        if intents.contains(where: { if case .startFocus = $0 { return true } else { return false } }) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.app?.screen = .focus }
+        }
+    }
+
+    /// The JSON object on an ACTION / QUERY line.
+    private static func json(fromLine line: String) -> [String: Any]? {
+        guard let start = line.firstIndex(of: "{"), let end = line.lastIndex(of: "}"), start < end,
+              let data = String(line[start...end]).data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private static func localDate(_ text: String, format: String) -> Date? {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = format
+        return f.date(from: text)
+    }
+
+    /// Actions that change existing things (complete, delete, move, style, memory).
+    /// "move_reminder", "Move-Reminder" and "movereminder" all become "movereminder".
+    private static func normalizedType(_ json: [String: Any]) -> String? {
+        guard let raw = json["type"] as? String else { return nil }
+        return raw.lowercased().filter { $0.isLetter }
+    }
+
+    private func extraAction(_ line: String) -> (text: String, card: ActionCard?)? {
+        guard let json = Self.json(fromLine: line), let type = Self.normalizedType(json) else { return nil }
+        let title = (json["title"] as? String) ?? ""
+        switch type {
+        case "completetask":
+            guard let task = planner?.findTask(title) else { return ("I couldn't find a task called \(title).", nil) }
+            if task.isCompleted { return ("\(task.title) is already done.", nil) }
+            planner?.setCompleted(task, true)
+            return ("Ticked off \(task.title).",
+                    ActionCard(kind: .task, heading: "Task done", title: task.title,
+                               detail: planner?.selectedListTitle ?? "", undo: nil, canEdit: true))
+        case "deletetask":
+            guard let task = planner?.findTask(title) else { return ("I couldn't find a task called \(title).", nil) }
+            planner?.deleteReminder(id: task.id)
+            return ("Deleted \(task.title).", nil)
+        case "movereminder":
+            guard let task = planner?.findTask(title) else { return ("I couldn't find a reminder called \(title).", nil) }
+            guard let text = json["due"] as? String, let due = Self.localDate(String(text.prefix(16)), format: "yyyy-MM-dd'T'HH:mm"),
+                  planner?.reschedule(task, to: due) == true else { return ("Sorry, I couldn't move \(task.title).", nil) }
+            return ("Moved \(task.title) to \(dayWord(due)) at \(TimeText.time(due)).",
+                    ActionCard(kind: .reminder, heading: "Reminder moved", title: task.title,
+                               detail: "\(CommandParser.capitalizeFirst(dayWord(due))), \(TimeText.time(due))",
+                               undo: nil, canEdit: true))
+        case "deletealarm":
+            guard let alarms = alarms else { return nil }
+            let time = (json["time"] as? String) ?? "all"
+            if time == "all" {
+                let n = alarms.removeAlarms(hour: nil, minute: nil)
+                return (n == 0 ? "There are no alarms to delete." : "Deleted \(n == 1 ? "the alarm" : "all \(n) alarms").", nil)
+            }
+            let parts = time.split(separator: ":").compactMap { Int($0) }
+            guard parts.count >= 2 else { return nil }
+            let n = alarms.removeAlarms(hour: parts[0], minute: parts[1])
+            let label = Alarm(hour: parts[0], minute: parts[1]).timeText
+            return (n == 0 ? "I couldn't find an alarm at \(label)." : "Deleted the \(label) alarm.", nil)
+        case "canceltimer":
+            return perform(.cancelTimer)
+        case "stopfocus":
+            return perform(.stopFocus)
+        case "setstyle":
+            guard let raw = json["style"] as? String, let style = AppStyle(rawValue: raw.lowercased()) else { return nil }
+            app?.style = style
+            return ("Switched to \(style.displayName).", nil)
+        case "remember":
+            let fact = (json["fact"] as? String) ?? ""
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.ai?.loadMemories() }
+            return ("Got it, I'll remember that.",
+                    ActionCard(kind: .info, heading: "Remembered", title: fact, detail: "Stored on your PC",
+                               undo: nil, canEdit: false))
+        case "forget":
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.ai?.loadMemories() }
+            return ("Okay, I've forgotten that.", nil)
+        default:
+            return nil
+        }
+    }
+
+    /// Answers the AI's QUERY lines with real data from the phone, as a RESULTS message.
+    private func runQueries(_ raw: String) -> String {
+        var out: [String] = []
+        var statuses: [String] = []
+        let now = Date()
+        for line in raw.components(separatedBy: .newlines) where line.contains("QUERY") {
+            guard let json = Self.json(fromLine: line), let type = Self.normalizedType(json) else { continue }
+            switch type {
+            case "events":
+                statuses.append("Checking your calendar…")
+                guard let planner = planner, planner.calendarAccess == .granted else {
+                    out.append("events: calendar access is off"); continue
+                }
+                let day = (json["date"] as? String).flatMap { Self.localDate($0, format: "yyyy-MM-dd") } ?? now
+                let events = planner.events(on: day)
+                let list = events.map { $0.isAllDay ? "\($0.title) (all day)" : "\($0.title) \(TimeText.time($0.start))–\(TimeText.time($0.end))" }
+                out.append("events on \(DateText.long(day)): " + (list.isEmpty ? "none" : list.joined(separator: "; ")))
+            case "tasks":
+                statuses.append("Checking your tasks…")
+                guard let planner = planner, planner.remindersAccess == .granted else {
+                    out.append("tasks: reminders access is off"); continue
+                }
+                let open = planner.tasks.filter { !$0.isCompleted }.map { task -> String in
+                    if let due = task.dueDate, task.hasDueTime { return "\(task.title) (due \(dayWord(due)) \(TimeText.time(due)))" }
+                    return task.title
+                }
+                let done = planner.tasks.filter { $0.isCompleted }.map { $0.title }
+                out.append("open tasks: " + (open.isEmpty ? "none" : open.joined(separator: "; ")))
+                out.append("done today: " + (done.isEmpty ? "none" : done.joined(separator: "; ")))
+            case "alarms":
+                statuses.append("Checking your alarms…")
+                let list = (alarms?.alarms ?? []).map { "\($0.timeText) \($0.daysText)\($0.enabled ? "" : " (off)")" }
+                out.append("alarms: " + (list.isEmpty ? "none" : list.joined(separator: "; ")))
+            case "weather":
+                statuses.append("Checking the forecast…")
+                guard let w = weather?.snapshot else { out.append("weather: not available"); continue }
+                if (json["day"] as? String) == "tomorrow" {
+                    if let high = w.tomorrowHigh, let low = w.tomorrowLow {
+                        out.append("weather tomorrow: \(WeatherCode.text(w.tomorrowCode ?? 3)), high \(Int(high.rounded())), low \(Int(low.rounded()))")
+                    } else {
+                        out.append("weather tomorrow: not available")
+                    }
+                } else {
+                    let rain = w.nextHours(after: now, count: 12).contains { WeatherSnapshot.isRainy($0.code) }
+                    out.append("weather today: \(Int(w.temperature.rounded())) degrees, \(WeatherCode.text(w.code)), high \(Int(w.high.rounded())), low \(Int(w.low.rounded())), rain in next 12 h: \(rain ? "likely" : "no")")
+                }
+            case "focus":
+                statuses.append("Checking your focus time…")
+                if let focus = focus {
+                    let minutes = Int(focus.liveFocusedToday / 60)
+                    out.append("focus today: \(minutes / 60) h \(minutes % 60) min, \(focus.sessionsDone) of \(focus.sessionsPerCycle) sessions done")
+                }
+            default:
+                out.append("\(type): unknown lookup")
+            }
+        }
+        thinkingStatus = statuses.first ?? "Thinking it through…"
+        return "RESULTS\n" + out.joined(separator: "\n") + "\nNow do what I originally asked: answer briefly, or reply with ACTION lines."
+    }
+
+    /// `ACTION {"type": "alarm", "time": "16:30"}` → the matching VoiceIntent.
+    private static func intent(fromActionLine line: String) -> VoiceIntent? {
+        guard let json = Self.json(fromLine: line), let type = Self.normalizedType(json) else { return nil }
+        switch type {
+        case "timer":
+            if let seconds = (json["seconds"] as? NSNumber)?.intValue, seconds > 0 { return .timer(seconds: seconds) }
+        case "alarm":
+            if let time = json["time"] as? String {
+                let parts = time.split(separator: ":").compactMap { Int($0) }
+                if parts.count >= 2, parts[0] < 24, parts[1] < 60 { return .alarm(hour: parts[0], minute: parts[1]) }
+            }
+        case "reminder":
+            let title = (json["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Reminder"
+            var due: Date? = nil
+            if let text = json["due"] as? String {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.dateFormat = "yyyy-MM-dd'T'HH:mm"
+                due = f.date(from: String(text.prefix(16)))
+            }
+            return .reminder(title: title, due: due)
+        case "task":
+            if let title = json["title"] as? String, !title.isEmpty { return .addTask(title) }
+        case "focus":
+            return .startFocus(minutes: (json["minutes"] as? NSNumber)?.intValue)
+        default:
+            break
+        }
+        return nil
     }
 
     /// S1: the PC can't be reached (or isn't set up). Offline commands keep working.
@@ -245,6 +560,17 @@ final class AssistantService: ObservableObject {
         var context = ["date": DateText.long(now), "time": TimeText.time(now)]
         if let w = weather?.snapshot {
             context["weather"] = "\(Int(w.temperature.rounded())) degrees, \(WeatherCode.text(w.code).lowercased()), high \(Int(w.high.rounded())), low \(Int(w.low.rounded()))"
+        }
+        let iso = DateFormatter()
+        iso.locale = Locale(identifier: "en_US_POSIX")
+        iso.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        context["now"] = iso.string(from: now)
+        if ai?.shareDay ?? false, let planner = planner {
+            let events = planner.events.filter { $0.isAllDay || $0.end > now }.prefix(6)
+                .map { $0.isAllDay ? "\($0.title) (all day)" : "\($0.title) at \(TimeText.time($0.start))" }
+            context["today's events"] = events.isEmpty ? "none" : events.joined(separator: ", ")
+            let open = planner.tasks.filter { !$0.isCompleted }.prefix(8).map { $0.title }
+            context["open tasks"] = open.isEmpty ? "none" : open.joined(separator: ", ")
         }
         return context
     }
@@ -355,9 +681,38 @@ final class AssistantService: ObservableObject {
                                detail: "Timers · alarms · reminders · lists · calendar · weather · focus",
                                undo: nil, canEdit: false))
 
+        case .tasks:
+            return tasksReply()
+
+        case .needsTime(let kind):
+            if kind == "timer" {
+                pendingPrefix = "set a timer for"
+                return ("For how long?", nil)
+            }
+            pendingPrefix = "set an alarm for"
+            return ("For what time?", nil)
+
         case .unknown:
             return ("Sorry, I didn't understand.", nil)
         }
+    }
+
+    private func tasksReply() -> (text: String, card: ActionCard?) {
+        guard let planner = planner else { return ("Tasks aren't available.", nil) }
+        if planner.remindersAccess == .denied { return ("I can't see your tasks. Allow Reminders access in Settings.", nil) }
+        let open = planner.tasks.filter { !$0.isCompleted }
+        guard !open.isEmpty else {
+            return ("You have no open tasks. Nice work!",
+                    ActionCard(kind: .task, heading: "Tasks", title: "All done", detail: planner.selectedListTitle,
+                               undo: nil, canEdit: true))
+        }
+        let names = open.prefix(3).map { $0.title }
+        var list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+        if open.count > 3 { list += ", plus \(open.count - 3) more" }
+        let count = open.count == 1 ? "1 open task" : "\(open.count) open tasks"
+        return ("You have \(count): \(list).",
+                ActionCard(kind: .task, heading: "Tasks · \(count)", title: open[0].title,
+                           detail: planner.selectedListTitle, undo: nil, canEdit: true))
     }
 
     private func agenda(offset: Int) -> (text: String, card: ActionCard?) {

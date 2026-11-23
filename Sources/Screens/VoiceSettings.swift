@@ -7,6 +7,7 @@ struct VoiceSettings: View {
     @EnvironmentObject private var speech: SpeechService
     @EnvironmentObject private var voice: VoiceService
     @EnvironmentObject private var assistant: AssistantService
+    @EnvironmentObject private var briefing: BriefingService
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -14,8 +15,81 @@ struct VoiceSettings: View {
             listeningSection
             repliesSection
                 .padding(.top, 12)
+            briefingsSection
+                .padding(.top, 12)
             historySection
                 .padding(.top, 12)
+        }
+    }
+
+    private var briefingsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Briefings")
+            VStack(spacing: 0) {
+                SettingsRow {
+                    Image(systemName: "sun.max.fill").symbolRenderingMode(.multicolor).frame(width: 24)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Morning briefing")
+                        Text("When you sit down, 5–11 AM").font(.system(size: 13)).foregroundColor(theme.secondaryLabel)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $briefing.morningOn).labelsHidden().toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                }
+                .padding(.vertical, 3)
+                RowSeparator()
+                SettingsRow {
+                    Image(systemName: "moon.stars.fill").symbolRenderingMode(.multicolor).frame(width: 24)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Evening wrap-up")
+                        Text("When you're at the desk, 6–10 PM").font(.system(size: 13)).foregroundColor(theme.secondaryLabel)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $briefing.eveningOn).labelsHidden().toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                }
+                .padding(.vertical, 3)
+                RowSeparator()
+                SettingsRow {
+                    Image(systemName: "calendar.badge.clock").foregroundColor(theme.red).frame(width: 24)
+                    Text("Heads-up before events")
+                    Spacer(minLength: 8)
+                    if briefing.headsUpOn {
+                        Menu {
+                            ForEach([5, 10, 15, 30], id: \.self) { minutes in
+                                Button("\(minutes) min before") { briefing.headsUpMinutes = minutes }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("\(briefing.headsUpMinutes) min")
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundColor(theme.accent)
+                        }
+                    }
+                    Toggle("", isOn: $briefing.headsUpOn).labelsHidden().toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                }
+                RowSeparator()
+                HStack(spacing: 0) {
+                    Button { briefing.playMorningNow() } label: {
+                        SettingsRow {
+                            Image(systemName: "play.circle.fill").foregroundColor(theme.accent)
+                            Text("Hear morning").foregroundColor(theme.accent)
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Button { briefing.playEveningNow() } label: {
+                        SettingsRow {
+                            Image(systemName: "play.circle.fill").foregroundColor(theme.accent)
+                            Text("Hear evening").foregroundColor(theme.accent)
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .groupedBox()
         }
     }
 
@@ -74,6 +148,20 @@ struct VoiceSettings: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel("Spoken replies")
             VStack(spacing: 0) {
+                SettingsRow {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Keep listening after answers")
+                        Text("Say a follow-up without tapping the mic")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryLabel)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $assistant.keepListening)
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                }
+                .padding(.vertical, 3)
+                RowSeparator()
                 SettingsRow {
                     Text("Speak replies out loud")
                     Spacer(minLength: 8)

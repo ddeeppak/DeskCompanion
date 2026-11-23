@@ -11,7 +11,8 @@ struct AssistantView: View {
             ScreenHeader(title: "Assistant")
             switch assistant.phase {
             case .idle: IdleView()
-            case .listening: ListeningView()
+            case .listening:
+                if assistant.isFollowUp { AnswerView() } else { ListeningView() }
             case .thinking: ThinkingView()
             case .answered: AnswerView()
             case .misheard: MisheardView()
@@ -275,8 +276,11 @@ private struct ThinkingView: View {
                 .lineLimit(2)
                 .frame(maxWidth: 540)
             HStack(spacing: 6) {
-                Image(systemName: "desktopcomputer").font(.system(size: 13))
-                Text("Asking \(ai.model.isEmpty ? "Claude" : ai.model) on \(ai.serverName.isEmpty ? "your PC" : ai.serverName)")
+                Image(systemName: assistant.thinkingStatus.isEmpty ? "desktopcomputer" : "magnifyingglass")
+                    .font(.system(size: 13))
+                Text(assistant.thinkingStatus.isEmpty
+                     ? "Asking \(ai.model.isEmpty ? "Claude" : ai.model) on \(ai.serverName.isEmpty ? "your PC" : ai.serverName)"
+                     : assistant.thinkingStatus)
             }
             .font(.system(size: 13, weight: .bold))
             .foregroundColor(theme.secondaryLabel)
@@ -448,6 +452,9 @@ private struct AnswerView: View {
                 .padding(.horizontal, 4)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
+            if assistant.phase == .listening && assistant.isFollowUp {
+                FollowUpBar()
+            } else {
             Button { assistant.listen() } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "mic.fill").font(.system(size: 17))
@@ -460,6 +467,7 @@ private struct AnswerView: View {
                 .shadow(color: theme.glow ?? .clear, radius: 10)
             }
             .buttonStyle(.plain)
+            }
         }
     }
 
@@ -473,6 +481,41 @@ private struct AnswerView: View {
         default:
             return "Handled on this iPhone in \(seconds) s. General questions go to the AI on your PC."
         }
+    }
+}
+
+/// Conversation mode: listening for a follow-up while the answer stays on screen. Tap to stop.
+private struct FollowUpBar: View {
+    @EnvironmentObject private var assistant: AssistantService
+    @EnvironmentObject private var speech: SpeechService
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button { assistant.stopListening() } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Image(systemName: "mic.fill").font(.system(size: 15))
+                    Text(speech.transcript.isEmpty ? "Anything else?" : "Listening…")
+                        .font(.system(size: 15, weight: .bold))
+                    Spacer(minLength: 4)
+                    VoiceBars(level: speech.level, count: 10, maxHeight: 16, barWidth: 2)
+                }
+                .foregroundColor(theme.accent)
+                if !speech.transcript.isEmpty {
+                    Text("“\(speech.transcript)”")
+                        .font(.system(size: 14))
+                        .foregroundColor(theme.label)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: theme.controlRadius, style: .continuous).fill(theme.accentTint))
+            .overlay(RoundedRectangle(cornerRadius: theme.controlRadius, style: .continuous).stroke(theme.accent, lineWidth: 1.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Listening for a follow-up. Double-tap to stop")
     }
 }
 

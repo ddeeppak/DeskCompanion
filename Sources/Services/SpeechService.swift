@@ -38,6 +38,7 @@ final class SpeechService: ObservableObject {
     private var startedAt = Date()
     private var onFinish: ((String) -> Void)?
     private var lastLevelPublish = Date.distantPast
+    private var noSpeechTimeout: TimeInterval = 7
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "speech.locale")
@@ -71,8 +72,10 @@ final class SpeechService: ObservableObject {
     }
 
     /// Starts listening. `onFinish` gets the final text ("" if nothing was heard); `onDenied` if permission is off.
-    func start(onFinish: @escaping (String) -> Void, onDenied: @escaping () -> Void) {
+    func start(onFinish: @escaping (String) -> Void, onDenied: @escaping () -> Void,
+               noSpeechTimeout: TimeInterval = 7) {
         guard !isListening else { return }
+        self.noSpeechTimeout = noSpeechTimeout
         requestPermission { [weak self] granted in
             guard let self = self else { return }
             if granted { self.begin(onFinish) } else { onDenied() }
@@ -148,7 +151,7 @@ final class SpeechService: ObservableObject {
         guard isListening else { return }
         let now = Date()
         if transcript.isEmpty {
-            if now.timeIntervalSince(startedAt) > 7 { finish("") }        // nothing said
+            if now.timeIntervalSince(startedAt) > noSpeechTimeout { finish("") }   // nothing said
         } else if now.timeIntervalSince(lastChange) > 1.4 {
             finish(transcript)                                             // stopped talking
         }

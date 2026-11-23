@@ -13,11 +13,15 @@ struct AISettings: View {
             serverSection
             setupSection
                 .padding(.top, 12)
-            footnote("On your PC, open the DeskCompanion folder → bridge → double-click start_bridge.bat. Keep that window open. It shows the 6-digit pairing code. Your PC and iPhone must be on the same Wi-Fi.")
+            memorySection
+                .padding(.top, 12)
+            footnote("On your PC, open the DeskCompanion folder → bridge → double-click start_bridge.bat. Keep that window open. It shows the 6-digit pairing code. Your PC and iPhone must be on the same Wi-Fi, and Windows must treat that Wi-Fi as a Private network.")
+            footnote("The AI can also do things for you: \"remind me after lunch to call the bank\" or \"wake me 30 minutes before my first meeting\". Questions go to Claude through your PC; event and task titles are included only when sharing is on.")
         }
         .onAppear {
             ai.startDiscovery()
             ai.check()
+            ai.loadMemories()
         }
     }
 
@@ -85,6 +89,20 @@ struct AISettings: View {
                         .accessibilityLabel("PC address, leave empty for automatic")
                 }
                 RowSeparator()
+                SettingsRow {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Share today's events and tasks")
+                        Text("Lets the AI answer \"what should I do first?\"")
+                            .font(.system(size: 13))
+                            .foregroundColor(theme.secondaryLabel)
+                    }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $ai.shareDay)
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                }
+                .padding(.vertical, 3)
+                RowSeparator()
                 Button {
                     ai.manualHost = ""
                     ai.startDiscovery()
@@ -115,6 +133,49 @@ struct AISettings: View {
                 .disabled(testing || !ai.isConfigured)
             }
             .groupedBox()
+        }
+    }
+
+    private var memorySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Memory")
+            VStack(spacing: 0) {
+                if ai.memories.isEmpty {
+                    SettingsRow {
+                        Image(systemName: "brain.head.profile").foregroundColor(theme.accent2).frame(width: 24)
+                        Text(ai.state == .online ? "Nothing remembered yet" : "Connect to see what the AI remembers")
+                            .foregroundColor(theme.secondaryLabel)
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    ForEach(ai.memories, id: \.self) { fact in
+                        SettingsRow {
+                            Image(systemName: "brain.head.profile").foregroundColor(theme.accent2).frame(width: 24)
+                            Text(fact).lineLimit(2)
+                            Spacer(minLength: 8)
+                            Button { ai.removeMemory(fact) } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .font(.system(size: 22))
+                                    .foregroundColor(theme.red)
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Forget \(fact)")
+                        }
+                        RowSeparator()
+                    }
+                    Button { ai.clearMemories() } label: {
+                        SettingsRow {
+                            Text("Forget everything").foregroundColor(theme.red)
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .groupedBox()
+            footnote("Say \"remember that…\" to add, \"forget…\" to remove, or \"what do you know about me?\". Stored only on your PC, in bridge/memory.local.json.")
         }
     }
 

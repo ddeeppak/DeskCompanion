@@ -25,4 +25,5 @@ Design: `../design/claude-design-v1/` · Plan: `../desk-companion-backlog.md`
 - [x] Step 5: Voice assistant (offline): speech, spoken replies, timers, alarms, reminders, lists, agenda, weather, focus, undo
 - [x] Step 6: Local AI on PC: Desk Bridge (Claude Code, Haiku, low effort, warm streaming session), auto-discovery, pairing code
 - [x] Step 7: Sensors: Away mode (front camera, on-device), wave to talk/brighten (proximity), noise meter
+- [x] 0.8: Smart assistant: AI lookups (calendar any day, tasks, alarms, weather, focus) + edit actions, long-term memory on the PC, morning/evening briefings and event heads-ups, conversation mode
 - [ ] Step 8: Polish

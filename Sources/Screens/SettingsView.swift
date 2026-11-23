@@ -321,7 +321,7 @@ private struct AboutSettings: View {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "7 · Sensors (Away, wave, noise)"),
+                InfoRow(title: "Build step", value: "0.8 · Smart assistant (tools, memory, briefings)"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])

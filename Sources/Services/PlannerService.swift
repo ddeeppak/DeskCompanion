@@ -253,6 +253,47 @@ final class PlannerService: ObservableObject {
     /// When a reminder was created by voice (for "set by voice at 9:45 AM").
     func voiceCreatedAt(_ id: String) -> Date? { voiceCreated[id] }
 
+    // MARK: Find and change tasks by name (used by the AI)
+
+    /// Best match for a spoken or AI-written title: exact, then contains, then most shared words. Open tasks first.
+    func findTask(_ title: String) -> TaskItem? {
+        let query = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return nil }
+        let candidates = tasks.sorted { !$0.isCompleted && $1.isCompleted }
+        if let exact = candidates.first(where: { $0.title.lowercased() == query }) { return exact }
+        if let close = candidates.first(where: {
+            let t = $0.title.lowercased()
+            return t.contains(query) || query.contains(t)
+        }) { return close }
+        let words = Set(query.split(separator: " ").map(String.init).filter { $0.count > 2 })
+        let best = candidates
+            .map { task -> (TaskItem, Int) in
+                (task, Set(task.title.lowercased().split(separator: " ").map(String.init)).intersection(words).count)
+            }
+            .max { $0.1 < $1.1 }
+        if let best = best, best.1 > 0 { return best.0 }
+        return nil
+    }
+
+    func setCompleted(_ task: TaskItem, _ done: Bool) {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else { return }
+        reminder.isCompleted = done
+        try? store.save(reminder, commit: true)
+        reloadTasks()
+    }
+
+    /// Moves a reminder to a new date and time (and its alert with it).
+    func reschedule(_ task: TaskItem, to due: Date) -> Bool {
+        guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else { return false }
+        reminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due)
+        reminder.alarms?.forEach { reminder.removeAlarm($0) }
+        reminder.addAlarm(EKAlarm(absoluteDate: due))
+        do { try store.save(reminder, commit: true) } catch { return false }
+        alertedIDs.remove(task.id)
+        reloadTasks()
+        return true
+    }
+
     // MARK: Due reminder alerts (banner over Home)
 
     func checkAlerts(now: Date = Date()) {

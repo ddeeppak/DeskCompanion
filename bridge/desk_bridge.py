@@ -33,19 +33,48 @@ SERVICE_TYPE = "_deskbridge._tcp"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "bridge_config.local.json")       # git-ignored: holds the pairing code
 WORK_DIR = os.path.join(tempfile.gettempdir(), "desk-bridge-empty")   # Claude runs here: no project files
-VERSION = 2
+VERSION = 3
 MAX_TURNS = 40                 # refresh the session after this many questions
 IDLE_RESET_S = 30 * 60         # ...or after 30 minutes without questions
 ANSWER_TIMEOUT_S = 60
+MEMORY_PATH = os.path.join(HERE, "memory.local.json")              # git-ignored: facts the user asked to remember
+MAX_MEMORIES = 60
 
 SYSTEM_PROMPT = (
-    "You are Desk Companion, a friendly voice assistant on the user's home desk display. "
+    "You are Desk Companion, a friendly voice assistant on the user's home desk display (an iPhone). "
     "Your reply is spoken aloud by a text-to-speech voice, so answer in 1 to 3 short, natural sentences. "
-    "Plain text only: no markdown, lists, headings, emoji, URLs or code. "
-    "Each user message may start with a Context line (date, time, weather); use it only when it helps. "
-    "Timers, alarms, reminders, lists, calendar and weather are handled by the phone itself; "
-    "if asked to do one of those, tell the user they can simply say it, for example 'set a 10 minute timer'. "
-    "If you are not sure, say so briefly."
+    "Plain text only: no markdown, lists, headings, emoji, URLs or code.\n"
+    "Each user message may start with a Context line: the current date and time ('now', YYYY-MM-DDTHH:MM), weather, "
+    "today's events and open tasks, and 'memory' (facts the user asked you to remember). Use them naturally; never "
+    "invent events, tasks or facts.\n\n"
+    "LOOKUPS. If you need information that is not in the Context, your WHOLE reply must be only QUERY lines "
+    "(one per lookup). The phone replies with a RESULTS message, then you answer or act. Available lookups:\n"
+    'QUERY {"type": "events", "date": "2026-11-26"}   (calendar for any day)\n'
+    'QUERY {"type": "tasks"}   (open tasks and tasks done today)\n'
+    'QUERY {"type": "alarms"}\n'
+    'QUERY {"type": "weather", "day": "tomorrow"}   ("today" or "tomorrow")\n'
+    'QUERY {"type": "focus"}   (focus time and sessions today)\n\n'
+    "ACTIONS. When the user wants something done, your WHOLE reply must be only ACTION lines: no explanation before "
+    "or after (the phone confirms out loud itself). One line per item, each the word ACTION followed by JSON:\n"
+    'ACTION {"type": "timer", "seconds": 600}\n'
+    'ACTION {"type": "alarm", "time": "16:30"}   (24-hour; the next time that clock time comes round)\n'
+    'ACTION {"type": "reminder", "title": "Call the bank", "due": "2026-11-23T13:30"}   (due may be null)\n'
+    'ACTION {"type": "task", "title": "Buy milk"}\n'
+    'ACTION {"type": "complete_task", "title": "Pay electricity bill"}\n'
+    'ACTION {"type": "delete_task", "title": "Buy eggs"}\n'
+    'ACTION {"type": "move_reminder", "title": "Dentist", "due": "2026-11-28T09:00"}\n'
+    'ACTION {"type": "delete_alarm", "time": "16:30"}   (or "time": "all")\n'
+    'ACTION {"type": "cancel_timer"}\n'
+    'ACTION {"type": "focus", "minutes": 25}   and   ACTION {"type": "stop_focus"}\n'
+    'ACTION {"type": "set_style", "style": "warm"}   (calm, futuristic or warm)\n'
+    'ACTION {"type": "remember", "fact": "Mom\'s phone number ends in 42"}\n'
+    'ACTION {"type": "forget", "fact": "Mom\'s phone number"}\n'
+    "Use remember when the user shares something about themselves worth keeping, or asks you to remember it; "
+    "write the fact as a short third-person sentence. For titles in complete/delete/move, use the task's name as "
+    "it appears in the results. Work out times from 'now' and the events ('after lunch' is about 13:30, 'in an "
+    "hour' is now plus 60 minutes, 'before my 9 o'clock meeting' is shortly before it). If an essential detail is "
+    "missing (such as the time for an alarm), ask one short question instead. For everything else, answer "
+    "normally. If you are not sure, say so briefly."
 )
 
 # ---------------------------------------------------------------- config
@@ -76,9 +105,61 @@ CONFIG = load_config()
 CLAUDE = shutil.which("claude")
 STATS = {"last_ms": None, "first_ms": None, "answered": 0}
 
+# ---------------------------------------------------------------- long-term memory (stored on this PC)
+
+MEMORY_LOCK = threading.Lock()
+
+
+def load_memory():
+    try:
+        with open(MEMORY_PATH, encoding="utf-8") as f:
+            items = json.load(f)
+        return [str(x) for x in items if str(x).strip()][:MAX_MEMORIES]
+    except (OSError, ValueError):
+        return []
+
+
+def save_memory(items):
+    with open(MEMORY_PATH, "w", encoding="utf-8") as f:
+        json.dump(items[:MAX_MEMORIES], f, indent=2, ensure_ascii=False)
+
+
+def forget_matching(items, phrase):
+    """Removes facts that contain the phrase (or that the phrase contains)."""
+    p = phrase.lower().strip()
+    if not p:
+        return items
+    return [x for x in items if p not in x.lower() and x.lower() not in p]
+
+
+def apply_memory_actions(answer):
+    """Saves 'remember' / 'forget' ACTION lines from Claude's answer. The phone just confirms them."""
+    changed = False
+    with MEMORY_LOCK:
+        items = load_memory()
+        for line in answer.splitlines():
+            if "ACTION" not in line or "{" not in line:
+                continue
+            try:
+                data = json.loads(line[line.index("{"): line.rindex("}") + 1])
+            except ValueError:
+                continue
+            kind = data.get("type")
+            fact = str(data.get("fact", "")).strip()
+            if kind == "remember" and fact:
+                if fact.lower() not in (x.lower() for x in items):
+                    items = [fact] + forget_matching(items, fact)   # newest first, replaces close duplicates
+                    changed = True
+            elif kind == "forget" and fact:
+                before = len(items)
+                items = forget_matching(items, fact)
+                changed = changed or len(items) != before
+        if changed:
+            save_memory(items)
+
 
 def clean_for_speech(text):
-    text = re.sub(r"[*_#`>]+", "", text)
+    text = re.sub(r"[*#`>]+", "", text)            # markdown symbols (underscores kept: ACTION names use them)
     text = re.sub(r"^\s*[-•]\s+", "", text, flags=re.M)
     return re.sub(r"[ \t]+", " ", text)
 
@@ -199,6 +280,10 @@ SESSION = ClaudeSession()
 
 def compose(question, context, history, fresh_session):
     lines = []
+    context = dict(context or {})
+    memory = load_memory()
+    if memory:
+        context["memory"] = " | ".join(memory)
     if context:
         parts = [f"{k}: {v}" for k, v in context.items() if v]
         if parts:
@@ -237,7 +322,12 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(min(length, 64_000)) or b"{}")
 
     def do_GET(self):
-        if self.path.split("?")[0] != "/health":
+        route = self.path.split("?")[0]
+        if route == "/memory":
+            if not self._authorized():
+                return self._send(401, {"error": "Wrong pairing code"})
+            return self._send(200, {"facts": load_memory()})
+        if route != "/health":
             return self._send(404, {"error": "not found"})
         self._send(200, {
             "ok": True, "version": VERSION, "name": CONFIG["name"], "brain": "Claude Code",
@@ -245,14 +335,30 @@ class Handler(BaseHTTPRequestHandler):
             "paired": self._authorized(), "claudeFound": bool(CLAUDE),
             "warm": SESSION.proc is not None and SESSION.proc.poll() is None,
             "lastMs": STATS["last_ms"], "firstMs": STATS["first_ms"],
+            "memories": len(load_memory()),
         })
 
     def do_POST(self):
         route = self.path.split("?")[0]
-        if route not in ("/ask", "/reset"):
+        if route not in ("/ask", "/reset", "/memory"):
             return self._send(404, {"error": "not found"})
         if not self._authorized():
             return self._send(401, {"error": "Wrong pairing code"})
+        if route == "/memory":
+            try:
+                req = self._read_json()
+            except ValueError:
+                return self._send(400, {"error": "Bad request"})
+            with MEMORY_LOCK:
+                items = load_memory()
+                if req.get("clear"):
+                    items = []
+                elif req.get("remove"):
+                    items = [x for x in items if x != req["remove"]]
+                elif req.get("add"):
+                    items = [str(req["add"]).strip()] + items
+                save_memory(items)
+            return self._send(200, {"facts": items})
         if route == "/reset":
             threading.Thread(target=SESSION.reset, daemon=True).start()
             return self._send(200, {"ok": True})
@@ -290,6 +396,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 print(f"[{stamp}]   error: {exc}")
                 return emit({"error": str(exc)})
+            apply_memory_actions(answer)
             emit({"done": True, "answer": answer, "ms": ms, "firstMs": first, "model": SESSION.model_used})
         else:
             try:
@@ -299,6 +406,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 print(f"[{stamp}]   error: {exc}")
                 return self._send(502, {"error": str(exc)})
+            apply_memory_actions(answer)
             self._send(200, {"answer": answer, "ms": ms, "firstMs": first, "model": SESSION.model_used})
         STATS.update(last_ms=ms, first_ms=first, answered=STATS["answered"] + 1)
         print(f"[{stamp}]   A ({first} ms first / {ms} ms total): {answer[:120]}")

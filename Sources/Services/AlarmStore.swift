@@ -161,6 +161,18 @@ final class AlarmStore: ObservableObject {
         if snoozedID == id { snoozedID = nil; snoozedUntil = nil }
     }
 
+    /// Deletes alarms at a clock time, or every alarm when hour/minute are nil. Returns how many.
+    @discardableResult
+    func removeAlarms(hour: Int?, minute: Int?) -> Int {
+        let before = alarms.count
+        if let hour = hour, let minute = minute {
+            alarms.removeAll { $0.hour == hour && $0.minute == minute }
+        } else {
+            alarms.removeAll()
+        }
+        return before - alarms.count
+    }
+
     func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
