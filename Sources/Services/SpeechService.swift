@@ -116,6 +116,7 @@ final class SpeechService: ObservableObject {
 
         transcript = ""
         isListening = true
+        Haptics.suppressed = true
         startedAt = Date()
         lastChange = Date()
         onFinish = completion
@@ -156,6 +157,7 @@ final class SpeechService: ObservableObject {
     private func finish(_ text: String) {
         guard isListening else { return }
         isListening = false
+        Haptics.suppressed = false
         silenceTimer?.invalidate()
         silenceTimer = nil
         audioEngine.stop()

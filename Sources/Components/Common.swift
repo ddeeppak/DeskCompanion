@@ -25,6 +25,7 @@ struct StatusCluster: View {
                     .background(Capsule().fill(theme.accentTint))
                 }
             }
+            if app.aiStatus != .notSetUp {
             HStack(spacing: 7) {
                 if app.aiStatus == .offline {
                     Image(systemName: "wifi.slash")
@@ -42,6 +43,7 @@ struct StatusCluster: View {
             .frame(height: 28)
             .background(Capsule().fill(app.aiStatus == .offline ? theme.red.opacity(0.18) : theme.surface))
             .overlay(Capsule().stroke(app.aiStatus == .offline ? Color.clear : (theme.cardBorder ?? .clear), lineWidth: 1))
+            }
 
             HStack(spacing: 6) {
                 Text("\(battery.level)%")

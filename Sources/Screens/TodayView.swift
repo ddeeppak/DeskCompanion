@@ -328,6 +328,9 @@ private struct TasksCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(task.title)
+        .accessibilityValue(task.isCompleted ? "Done" : "Not done")
+        .accessibilityHint("Double-tap to toggle")
     }
 
     private var newTaskField: some View {
@@ -366,6 +369,7 @@ private struct TasksCard: View {
                     .background(Circle().fill(theme.accentTint))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Add a task by voice")
         }
         .padding(.top, 4)
     }
@@ -404,6 +408,8 @@ private struct HabitsCard: View {
                         ForEach(Array(habits.habits.enumerated()), id: \.element.id) { index, habit in
                             Button { habits.tap(habit) } label: { row(habit) }
                                 .buttonStyle(.plain)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityHint("Double-tap to tick or count")
                             if index < habits.habits.count - 1 {
                                 Rectangle().fill(theme.separator).frame(height: 1)
                             }

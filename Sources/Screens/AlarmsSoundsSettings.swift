@@ -10,6 +10,7 @@ struct AlarmsSoundsSettings: View {
     @State private var editingID: UUID?
     @State private var importing = false
     @State private var previewingID: String?
+    @State private var soundToDelete: SoundLibrary.CustomSound?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,6 +24,12 @@ struct AlarmsSoundsSettings: View {
             if case .success(let urls) = result {
                 urls.forEach { library.importFile($0) }
             }
+        }
+        .alert(item: $soundToDelete) { sound in
+            Alert(title: Text("Delete “\(sound.name)”?"),
+                  message: Text("The sound file will be removed from this iPhone. This can't be undone."),
+                  primaryButton: .destructive(Text("Delete")) { deleteSound(sound) },
+                  secondaryButton: .cancel())
         }
         .onDisappear {
             if previewingID != nil {
@@ -151,12 +158,11 @@ struct AlarmsSoundsSettings: View {
                                 .frame(width: 32, height: 44)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(previewingID == sound.id ? "Stop preview" : "Play \(sound.name)")
                         Text(sound.name).lineLimit(1)
                         Spacer(minLength: 8)
                         Button {
-                            if previewingID == sound.id { togglePreview(sound) }
-                            if focus.soundID == "file:\(sound.id)" { focus.soundID = "off" }
-                            library.delete(sound)
+                            soundToDelete = sound
                         } label: {
                             Image(systemName: "minus.circle.fill")
                                 .font(.system(size: 22))
@@ -164,6 +170,7 @@ struct AlarmsSoundsSettings: View {
                                 .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Delete \(sound.name)")
                     }
                     RowSeparator()
                 }
@@ -253,6 +260,12 @@ struct AlarmsSoundsSettings: View {
                     if focus.soundID == id { focus.soundID = "off" }
                 }
             })
+    }
+
+    private func deleteSound(_ sound: SoundLibrary.CustomSound) {
+        if previewingID == sound.id { togglePreview(sound) }
+        if focus.soundID == "file:\(sound.id)" { focus.soundID = "off" }
+        library.delete(sound)
     }
 
     private func togglePreview(_ sound: SoundLibrary.CustomSound) {

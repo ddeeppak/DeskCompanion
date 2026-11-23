@@ -66,6 +66,7 @@ final class QuickTimer: ObservableObject {
         ticker = nil
         endDate = nil
         ringing = true
+        Haptics.warning()
         SoundEngine.shared.startChime(maxSeconds: 60)
     }
 }

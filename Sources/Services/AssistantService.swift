@@ -70,6 +70,7 @@ final class AssistantService: ObservableObject {
     func listen() {
         guard let speech = speech, !speech.isListening else { return }
         voice?.stop()
+        Haptics.tap()                      // before the mic opens
         app?.screen = .assistant
         phase = .listening
         speech.start(onFinish: { [weak self] text in
@@ -90,6 +91,7 @@ final class AssistantService: ObservableObject {
         if text.isEmpty {
             heard = ""
             phase = .misheard
+            Haptics.error()
             return
         }
         handle(text)
@@ -104,6 +106,7 @@ final class AssistantService: ObservableObject {
         if intent == .unknown {
             heard = text
             phase = .misheard
+            Haptics.error()
             voice?.speak("Sorry, I didn't understand. Try saying it another way.")
             return
         }
@@ -114,6 +117,7 @@ final class AssistantService: ObservableObject {
         append(ChatMessage(fromUser: false, text: reply.text, source: "offline", date: Date()))
         card = reply.card
         phase = .answered
+        if reply.card?.undo != nil { Haptics.success() }
         voice?.speak(reply.text)
         if case .startFocus = intent {
             // Show the timer after the reply has been spoken.
@@ -206,7 +210,7 @@ final class AssistantService: ObservableObject {
             let length = Int(focus.focusLength / 60)
             return ("Starting a \(length) minute focus session.",
                     ActionCard(kind: .focus, heading: "Focus started", title: "\(length) min focus",
-                               detail: focus.task, undo: .focus, canEdit: false))
+                               detail: focus.task.isEmpty ? "Focus session" : focus.task, undo: .focus, canEdit: false))
 
         case .stopFocus:
             guard let focus = focus, focus.state == .running else { return ("Focus isn't running.", nil) }
@@ -299,6 +303,7 @@ final class AssistantService: ObservableObject {
             focus?.reset()
         }
         undone = true
+        Haptics.tap()
         append(ChatMessage(fromUser: false, text: "Undone.", source: "offline", date: Date()))
         voice?.speak("Undone.")
     }

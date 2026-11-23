@@ -160,6 +160,7 @@ private struct SensorRow: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -182,6 +183,7 @@ private struct WeatherCard: View {
             }
         }
         .card()
+        .accessibilityElement(children: .combine)
     }
 
     private func content(_ w: WeatherSnapshot) -> some View {
@@ -317,6 +319,8 @@ private struct UpNextCard: View {
         .card(padding: EdgeInsets(top: 11, leading: 14, bottom: 11, trailing: 14))
         .contentShape(Rectangle())
         .onTapGesture { app.screen = .today }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     private func title(_ event: DayEvent?) -> String {
@@ -384,6 +388,8 @@ private struct TasksCard: View {
         .card(padding: EdgeInsets(top: 11, leading: 14, bottom: 11, trailing: 14))
         .contentShape(Rectangle())
         .onTapGesture { app.screen = .today }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     private var nextLine: String {

@@ -61,9 +61,10 @@ struct Theme {
     /// Calm: SF Pro · Futuristic: SF Mono · Warm: SF Rounded
     func clockFont(_ size: CGFloat) -> Font {
         switch style {
-        case .calm: return Font.system(size: size, weight: .regular, design: .default).monospacedDigit()
+        // Natural-width digits: a fixed-width "1" sits in a wide slot and looks indented (changes once a minute).
+        case .calm: return Font.system(size: size, weight: .regular, design: .default)
         case .futuristic: return Font.system(size: size, weight: .regular, design: .monospaced)
-        case .warm: return Font.system(size: size, weight: .regular, design: .rounded).monospacedDigit()
+        case .warm: return Font.system(size: size, weight: .regular, design: .rounded)
         }
     }
 

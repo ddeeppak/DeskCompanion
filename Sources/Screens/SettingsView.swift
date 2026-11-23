@@ -128,6 +128,7 @@ struct SettingsView: View {
 private struct DisplaySettings: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var night: NightMode
+    @AppStorage(Haptics.enabledKey) private var hapticsOn = true
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -207,6 +208,21 @@ private struct DisplaySettings: View {
             .padding(.top, 4)
 
             footnote("Tap the night clock to brighten it for 30 seconds. Wave to brighten arrives in step 7.")
+
+            SectionLabel("Feedback")
+                .padding(.top, 10)
+            VStack(spacing: 0) {
+                SettingsRow {
+                    Text("Haptics")
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: $hapticsOn)
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
+                        .onChange(of: hapticsOn) { on in if on { Haptics.success() } }
+                }
+            }
+            .groupedBox()
+            footnote("Short taps when you tick a task, finish a timer or the assistant does something. Never while the microphone is listening. Turn off if the phone buzzes on the desk.")
         }
     }
 
@@ -303,7 +319,7 @@ private struct AboutSettings: View {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "5 · Voice assistant (offline)"),
+                InfoRow(title: "Build step", value: "5.2 · iOS polish (motion, haptics, VoiceOver)"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])

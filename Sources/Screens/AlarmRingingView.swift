@@ -7,6 +7,7 @@ struct AlarmRingingView: View {
     let onSnooze: () -> Void
     let onStop: () -> Void
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var swing = false
 
     init(alarm: Alarm, snoozeMinutes: Int, onSnooze: @escaping () -> Void, onStop: @escaping () -> Void) {
@@ -69,7 +70,7 @@ struct AlarmRingingView: View {
                 }
             }
             .foregroundColor(theme.label)
-            .onAppear { swing = true }
+            .onAppear { swing = !reduceMotion }
         }
     }
 }

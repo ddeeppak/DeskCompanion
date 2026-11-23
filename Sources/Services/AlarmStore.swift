@@ -127,6 +127,7 @@ final class AlarmStore: ObservableObject {
     private func ring(_ alarm: Alarm) {
         ringing = alarm
         ringStarted = Date()
+        Haptics.warning()
         SoundEngine.shared.startAlarm(tone: SoundEngine.AlarmTone(rawValue: alarm.tone) ?? .chime,
                                       volume: Float(volume), rising: alarm.rising)
     }
@@ -139,6 +140,7 @@ final class AlarmStore: ObservableObject {
 
     func snooze() {
         guard let alarm = ringing else { return }
+        Haptics.tap()
         snoozedID = alarm.id
         snoozedUntil = Date().addingTimeInterval(TimeInterval(snoozeMinutes * 60))
         stop()

@@ -57,7 +57,8 @@ final class FocusTimer: ObservableObject {
         preset = Preset(rawValue: d.string(forKey: "focus.preset") ?? "") ?? .short
         customFocusMinutes = d.object(forKey: "focus.customFocus") as? Int ?? 30
         customBreakMinutes = d.object(forKey: "focus.customBreak") as? Int ?? 5
-        task = d.string(forKey: "focus.task") ?? "Focus"
+        let savedTask = d.string(forKey: "focus.task") ?? ""
+        task = savedTask == "Focus" ? "" : savedTask
         soundID = d.string(forKey: "focus.sound") ?? "off"
         dayKey = HabitStore.key(Date())
         if d.string(forKey: "focus.day") == dayKey {
@@ -106,6 +107,7 @@ final class FocusTimer: ObservableObject {
     // MARK: Controls
 
     func toggle() {
+        Haptics.tap()
         switch state {
         case .running: pause()
         case .ready, .paused: start()
@@ -144,9 +146,12 @@ final class FocusTimer: ObservableObject {
     }
 
     func skip() {
-        guard state != .finished else { return }
+        guard state == .running || state == .paused else { return }
         finish()
     }
+
+    /// Reset / Skip only make sense once a session has started.
+    var canResetOrSkip: Bool { state == .running || state == .paused }
 
     /// "+5 min" on the finished screen: continue the phase that just ended.
     func extend(minutes: Int) {
@@ -210,6 +215,7 @@ final class FocusTimer: ObservableObject {
         }
         remaining = 0
         state = .finished
+        Haptics.success()
         SoundEngine.shared.startChime()
         NotificationCenter.default.post(name: .focusPhaseFinished, object: nil)
     }

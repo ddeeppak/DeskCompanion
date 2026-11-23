@@ -116,6 +116,7 @@ final class HabitStore: ObservableObject {
             e.count = e.count >= habit.target ? 0 : e.count + 1
         }
         e.doneAt = e.count >= habit.target ? Date() : nil
+        if e.count >= habit.target { Haptics.success() } else { Haptics.tap() }
         let day = Self.key(Date())
         var dayLog = log[day] ?? [:]
         dayLog[habit.id.uuidString] = e

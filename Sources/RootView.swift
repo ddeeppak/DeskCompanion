@@ -13,6 +13,7 @@ struct RootView: View {
     @EnvironmentObject private var quickTimer: QuickTimer
     // Note: RootView deliberately does not observe FocusTimer (it ticks twice a second).
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Once a minute: night schedule, weather, location, calendar + reminders.
     private let minuteTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
@@ -25,13 +26,21 @@ struct RootView: View {
         let theme = Theme.make(app.style)
 
         ZStack {
-            HStack(spacing: 0) {
-                if app.railVisible {
-                    RailView()
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+            // The rail and the screen are pinned to the exact screen height. If a screen's content is ever
+            // taller than 414 pt it is clipped inside its own area, so it can never push the rail up or down.
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    if app.railVisible {
+                        RailView()
+                            .frame(height: geo.size.height)
+                            .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
+                    }
+                    currentScreen
+                        .frame(maxWidth: .infinity)
+                        .frame(height: geo.size.height, alignment: .top)
+                        .clipped()
                 }
-                currentScreen
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             }
             .background(ThemeBackground())
 
@@ -45,10 +54,10 @@ struct RootView: View {
         .foregroundColor(theme.label)
         .preferredColorScheme(.dark)
         .statusBar(hidden: true)
-        .contentShape(Rectangle())
-        // Any touch (press or drag) brings the rail back and restarts the 30 s timer.
-        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in app.touchBegan() })
         .onAppear {
+            // Any touch brings the rail back and restarts the 30 s timer (watched at window level so scrolling works).
+            let model = app
+            TouchWatcher.install { model.touchBegan() }
             // Desk display: never auto-lock while the app is open.
             UIApplication.shared.isIdleTimerDisabled = true
             app.scheduleRailHide()
@@ -131,26 +140,31 @@ struct RootView: View {
                         secondaryTitle: "Snooze 10 min", primaryTitle: "Done",
                         onSecondary: { withAnimation { planner.snoozeAlert() } },
                         onPrimary: { withAnimation { planner.completeAlert() } })
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .transition(bannerTransition)
                 .zIndex(2)
         } else if quickTimer.ringing {
             AlertBanner(title: "Timer done",
                         subtitle: "\(quickTimer.label) · ended now",
                         symbol: "timer",
                         secondaryTitle: "+1 min", primaryTitle: "Stop",
-                        onSecondary: { withAnimation { quickTimer.addMinute() } },
-                        onPrimary: { withAnimation { quickTimer.stopRinging() } })
-                .transition(.move(edge: .top).combined(with: .opacity))
+                        onSecondary: { Haptics.tap(); withAnimation { quickTimer.addMinute() } },
+                        onPrimary: { Haptics.tap(); withAnimation { quickTimer.stopRinging() } })
+                .transition(bannerTransition)
                 .zIndex(2)
         }
 
         if let alarm = alarms.ringing {
             AlarmRingingView(alarm: alarm, snoozeMinutes: alarms.snoozeMinutes,
                              onSnooze: { withAnimation { alarms.snooze() } },
-                             onStop: { withAnimation { alarms.stop() } })
+                             onStop: { Haptics.tap(); withAnimation { alarms.stop() } })
                 .transition(.opacity)
                 .zIndex(3)
         }
+    }
+
+    /// Banners slide down, or just fade when Reduce Motion is on.
+    private var bannerTransition: AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 
     private func reminderSubtitle(_ task: TaskItem) -> String {

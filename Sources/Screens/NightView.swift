@@ -49,13 +49,15 @@ struct NightView: View {
                             .font(.system(size: 15))
                         Text("Tap to brighten")
                     }
-                    .font(.system(size: 13, weight: .semibold))
-                    .opacity(0.6)
+                    .font(.system(size: 15, weight: .semibold))
+                    .opacity(0.85)
                     .padding(.bottom, 16)
                 }
             }
             .foregroundColor(theme.night)
             .contentShape(Rectangle())
+            .accessibilityElement(children: .combine)
+            .accessibilityHint("Double-tap to brighten")
             .onTapGesture {
                 app.screen = .home
                 night.peek()

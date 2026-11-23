@@ -23,6 +23,9 @@ struct DeskCompanionApp: App {
     init() {
         // Alarms ring inside the app; the backup notification is only for when the app isn't open.
         UNUserNotificationCenter.current().delegate = NotificationRelay.shared
+        // No rubber-band stretch when pulling on lists/panels (SwiftUI on iOS 15 always bounces, even when
+        // the content fits). Lists still scroll; they just stop firmly at the ends.
+        UIScrollView.appearance().bounces = false
     }
 
     var body: some Scene {

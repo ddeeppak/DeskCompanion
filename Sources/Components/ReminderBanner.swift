@@ -87,6 +87,7 @@ struct AlertBanner: View {
 private struct AppBadge: View {
     let symbol: String?
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
     init(symbol: String?) { self.symbol = symbol }
@@ -115,6 +116,6 @@ private struct AppBadge: View {
             }
         }
         .frame(width: 40, height: 40)
-        .onAppear { pulse = true }
+        .onAppear { pulse = !reduceMotion }
     }
 }

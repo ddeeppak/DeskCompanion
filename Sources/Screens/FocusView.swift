@@ -18,8 +18,10 @@ struct FocusView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                FocusSide()
-                    .frame(width: 252)
+                ScrollView(.vertical, showsIndicators: false) {
+                    FocusSide()
+                }
+                .frame(width: 252)
             }
         }
         .screenPadding()
@@ -56,13 +58,17 @@ private struct RunningView: View {
                 }
                 .padding(.horizontal, 20)
             }
-            .frame(width: 226, height: 226)
+            .frame(width: 206, height: 206)
             .padding(5)
 
             HStack(spacing: 18) {
                 CircleControl(title: "Reset", fill: theme.fill, foreground: theme.label, bold: false) { focus.reset() }
+                    .disabled(!focus.canResetOrSkip)
+                    .opacity(focus.canResetOrSkip ? 1 : 0.4)
                 CircleControl(title: playTitle, fill: theme.accentTint, foreground: theme.accent, bold: true) { focus.toggle() }
                 CircleControl(title: "Skip", fill: theme.fill, foreground: theme.label, bold: false) { focus.skip() }
+                    .disabled(!focus.canResetOrSkip)
+                    .opacity(focus.canResetOrSkip ? 1 : 0.4)
             }
         }
     }
@@ -127,11 +133,12 @@ private struct DoneView: View {
     @EnvironmentObject private var focus: FocusTimer
     @EnvironmentObject private var sound: SoundEngine
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
     var body: some View {
         let focusEnded = focus.lastFinishedPhase == .focus
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             ZStack {
                 Circle()
                     .stroke(theme.green, lineWidth: 6)
@@ -152,9 +159,9 @@ private struct DoneView: View {
                         .foregroundColor(theme.secondaryLabel)
                 }
             }
-            .frame(width: 226, height: 226)
+            .frame(width: 206, height: 206)
             .padding(5)
-            .onAppear { pulse = true }
+            .onAppear { pulse = !reduceMotion }
 
             HStack(spacing: 10) {
                 Button { focus.extend(minutes: 5) } label: {
@@ -207,7 +214,7 @@ private struct FocusSide: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Working on")
                     .font(.system(size: 13))
@@ -216,7 +223,7 @@ private struct FocusSide: View {
                     .font(.system(size: 17, weight: .bold))
                     .submitLabel(.done)
             }
-            .card(padding: EdgeInsets(top: 11, leading: 13, bottom: 11, trailing: 13))
+            .card(padding: EdgeInsets(top: 10, leading: 13, bottom: 10, trailing: 13))
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("Timer")
@@ -230,7 +237,7 @@ private struct FocusSide: View {
                     }
                 }
             }
-            .card(padding: EdgeInsets(top: 11, leading: 13, bottom: 11, trailing: 13))
+            .card(padding: EdgeInsets(top: 10, leading: 13, bottom: 10, trailing: 13))
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("Sound")
@@ -264,7 +271,7 @@ private struct FocusSide: View {
                     }
                 }
             }
-            .card(padding: EdgeInsets(top: 11, leading: 13, bottom: 11, trailing: 13))
+            .card(padding: EdgeInsets(top: 10, leading: 13, bottom: 10, trailing: 13))
 
             HStack {
                 VStack(alignment: .leading, spacing: 0) {
@@ -284,8 +291,7 @@ private struct FocusSide: View {
                     }
                 }
             }
-            .frame(maxHeight: .infinity)
-            .card(padding: EdgeInsets(top: 11, leading: 13, bottom: 11, trailing: 13))
+            .card(padding: EdgeInsets(top: 10, leading: 13, bottom: 10, trailing: 13))
         }
     }
 
@@ -314,6 +320,7 @@ struct SegmentedBar<Value: Hashable>: View {
                 let option = options[index]
                 let selected = option.0 == selection
                 Button {
+                    if selection != option.0 { Haptics.selection() }
                     selection = option.0
                 } label: {
                     Text(option.1)

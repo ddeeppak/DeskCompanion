@@ -212,6 +212,7 @@ final class PlannerService: ObservableObject {
     func toggle(_ task: TaskItem) {
         guard let reminder = store.calendarItem(withIdentifier: task.id) as? EKReminder else { return }
         reminder.isCompleted = !reminder.isCompleted
+        if reminder.isCompleted { Haptics.success() } else { Haptics.tap() }
         try? store.save(reminder, commit: true)
         reloadTasks()
     }
@@ -277,6 +278,7 @@ final class PlannerService: ObservableObject {
 
     func snoozeAlert(minutes: Int = 10) {
         guard let task = alert else { return }
+        Haptics.tap()
         snoozedUntil[task.id] = Date().addingTimeInterval(TimeInterval(minutes * 60))
         alert = nil
     }

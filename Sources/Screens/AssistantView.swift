@@ -28,6 +28,7 @@ struct AssistantOrb: View {
     let active: Bool
     let muted: Bool
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animate = false
 
     init(active: Bool, muted: Bool = false) {
@@ -42,7 +43,7 @@ struct AssistantOrb: View {
                     .fill(RadialGradient(gradient: Gradient(colors: [theme.accent.opacity(0.45), theme.accent.opacity(0)]),
                                          center: .center, startRadius: 0, endRadius: 80))
                     .frame(width: 152, height: 152)
-                if active {
+                if active && !reduceMotion {
                     ForEach(0..<3, id: \.self) { index in
                         Circle()
                             .stroke(theme.accent, lineWidth: 2)
@@ -65,8 +66,8 @@ struct AssistantOrb: View {
                     Circle().fill(RadialGradient(gradient: Gradient(colors: [Color.white.opacity(muted ? 0 : 0.7), Color.white.opacity(0)]),
                                                  center: UnitPoint(x: 0.32, y: 0.26), startRadius: 0, endRadius: 44))
                 )
-                .scaleEffect(!muted && animate ? 1.05 : 1)
-                .animation(muted ? nil : .easeInOut(duration: 1.6).repeatForever(autoreverses: true), value: animate)
+                .scaleEffect(!muted && !reduceMotion && animate ? 1.05 : 1)
+                .animation(muted || reduceMotion ? nil : .easeInOut(duration: 1.6).repeatForever(autoreverses: true), value: animate)
             Image(systemName: muted ? "questionmark" : "mic.fill")
                 .font(.system(size: muted ? 44 : 38, weight: .bold))
                 .foregroundColor(muted ? theme.orange : .white)
@@ -110,6 +111,7 @@ struct VoiceBars: View {
 /// Small animated "speaking" bars.
 private struct SpeakingBars: View {
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var on = false
 
     var body: some View {
@@ -124,7 +126,7 @@ private struct SpeakingBars: View {
             }
         }
         .frame(height: 14)
-        .onAppear { on = true }
+        .onAppear { on = !reduceMotion }
     }
 }
 
@@ -195,6 +197,7 @@ private struct IdleView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Start listening")
             DefaultChips()
         }
     }
@@ -206,6 +209,7 @@ private struct ListeningView: View {
     @EnvironmentObject private var assistant: AssistantService
     @EnvironmentObject private var speech: SpeechService
     @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var caretOn = true
 
     var body: some View {
@@ -236,9 +240,11 @@ private struct ListeningView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Listening. Double-tap to stop")
             DefaultChips()
         }
         .onAppear {
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) { caretOn = false }
         }
     }
@@ -316,16 +322,34 @@ private struct AnswerView: View {
         }
     }
 
+    /// Scrollable conversation, kept scrolled to the newest message (long replies are never cut off).
     private var conversation: some View {
-        let recent = Array(assistant.messages.suffix(4))
+        let recent = Array(assistant.messages.suffix(10))
         let lastUserIndex = recent.lastIndex { $0.fromUser } ?? 0
-        return VStack(spacing: 8) {
-            Spacer(minLength: 0)
-            ForEach(Array(recent.enumerated()), id: \.element.id) { index, message in
-                bubble(message, faded: index < lastUserIndex, isLast: index == recent.count - 1)
+        return GeometryReader { geo in
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        ForEach(Array(recent.enumerated()), id: \.element.id) { index, message in
+                            bubble(message, faded: index < lastUserIndex, isLast: index == recent.count - 1)
+                                .id(message.id)
+                        }
+                    }
+                    .frame(minHeight: geo.size.height, alignment: .bottom)
+                }
+                .onAppear { scrollToEnd(proxy, recent) }
+                .onChange(of: assistant.messages.count) { _ in scrollToEnd(proxy, recent) }
+                .onChange(of: voice.speaking) { _ in scrollToEnd(proxy, recent) }
             }
         }
-        .clipped()
+    }
+
+    private func scrollToEnd(_ proxy: ScrollViewProxy, _ recent: [ChatMessage]) {
+        guard let last = assistant.messages.last else { return }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(last.id, anchor: .bottom) }
+        }
     }
 
     @ViewBuilder
