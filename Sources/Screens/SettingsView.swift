@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case ai, voice, sensors, display, today, privacy, about
+    case ai, voice, sensors, display, alarms, today, privacy, about
 
     var id: String { rawValue }
 
@@ -11,6 +11,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .voice: return "Voice"
         case .sensors: return "Sensors"
         case .display: return "Display & Night"
+        case .alarms: return "Alarms & Sounds"
         case .today: return "Today & Habits"
         case .privacy: return "Privacy"
         case .about: return "About"
@@ -23,6 +24,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .voice: return "speaker.wave.2.fill"
         case .sensors: return "eye.fill"
         case .display: return "moon.fill"
+        case .alarms: return "alarm.fill"
         case .today: return "checklist"
         case .privacy: return "lock.fill"
         case .about: return "info"
@@ -35,6 +37,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .voice: return Color(hex: 0xFF375F)
         case .sensors: return Color(hex: 0x30D158)
         case .display: return Color(hex: 0x5E5CE6)
+        case .alarms: return Color(hex: 0xFF453A)
         case .today: return Color(hex: 0xFF9F0A)
         case .privacy: return Color(hex: 0x0A84FF)
         case .about: return Color(hex: 0x8E8E93)
@@ -44,6 +47,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
 /// 08 Settings. Step 1: section list, working Style picker, About. Other sections are filled in later steps.
 struct SettingsView: View {
+    @EnvironmentObject private var app: AppState
     @Environment(\.theme) private var theme
     @State private var section: SettingsSection = .display
 
@@ -56,45 +60,62 @@ struct SettingsView: View {
                     .frame(height: 34)
                     .padding(.leading, 4)
                     .padding(.bottom, 8)
-                ForEach(SettingsSection.allCases) { item in
-                    let selected = section == item
-                    Button {
-                        section = item
-                    } label: {
-                        HStack(spacing: 10) {
-                            IconTile(symbol: item.icon,
-                                     color: selected ? Color.white.opacity(0.22) : item.tint)
-                            Text(item.title)
-                                .font(.system(size: 15, weight: selected ? .semibold : .regular))
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
+                // 8 sections don't fit in 414 pt, so the list scrolls.
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 2) {
+                        ForEach(SettingsSection.allCases) { item in
+                            sectionButton(item)
                         }
-                        .padding(.horizontal, 8)
-                        .frame(height: 44)
-                        .foregroundColor(selected ? theme.onAccent : theme.label)
-                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(selected ? theme.accent : Color.clear))
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                 }
-                Spacer(minLength: 0)
             }
             .frame(width: 184)
 
             ScrollView(.vertical, showsIndicators: false) {
                 detail
+                    .id(section)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, 8)
             }
         }
         .screenPadding()
+        .onAppear {
+            if let pending = app.pendingSettingsSection, let target = SettingsSection(rawValue: pending) {
+                section = target
+                app.pendingSettingsSection = nil
+            }
+        }
+    }
+
+    private func sectionButton(_ item: SettingsSection) -> some View {
+        let selected = section == item
+        return Button {
+            section = item
+        } label: {
+            HStack(spacing: 10) {
+                IconTile(symbol: item.icon,
+                         color: selected ? Color.white.opacity(0.22) : item.tint)
+                Text(item.title)
+                    .font(.system(size: 15, weight: selected ? .bold : .regular))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 44)
+            .foregroundColor(selected ? theme.onAccent : theme.label)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(selected ? theme.accent : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private var detail: some View {
         switch section {
         case .display: DisplaySettings()
+        case .alarms: AlarmsSoundsSettings()
+        case .voice: VoiceSettings()
         case .today: TodaySettings()
         case .about: AboutSettings()
         default: PlannedSettings(section: section)
@@ -175,7 +196,7 @@ private struct DisplaySettings: View {
                     Image(systemName: "moon.fill")
                     Text("Preview night clock (10 s)")
                 }
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 15, weight: .bold))
                 .foregroundColor(theme.accent)
                 .padding(.horizontal, 16)
                 .frame(height: 44)
@@ -251,7 +272,7 @@ private struct StyleTile: View {
 
                 HStack(spacing: 4) {
                     Text(style.displayName)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14, weight: .bold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     Spacer(minLength: 0)
@@ -282,7 +303,7 @@ private struct AboutSettings: View {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "4 · Today + Focus timer"),
+                InfoRow(title: "Build step", value: "5 · Voice assistant (offline)"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])
@@ -326,9 +347,9 @@ private struct PlannedSettings: View {
     private var rows: [InfoRow] {
         switch section {
         case .ai:
-            return [InfoRow(title: "Local AI server", value: "Step 6"),
-                    InfoRow(title: "Model", value: "Step 6"),
-                    InfoRow(title: "Offline commands", value: "Step 5")]
+            return [InfoRow(title: "Offline commands", value: "On"),
+                    InfoRow(title: "Local AI server", value: "Step 6"),
+                    InfoRow(title: "Model", value: "Step 6")]
         case .voice:
             return [InfoRow(title: "Speech recognition", value: "Step 5"),
                     InfoRow(title: "Voice & speed", value: "Step 5")]
@@ -339,8 +360,8 @@ private struct PlannedSettings: View {
                     InfoRow(title: "Noise meter", value: "Step 7")]
         case .privacy:
             return [InfoRow(title: "Permissions overview", value: "Step 8"),
-                    InfoRow(title: "Clear assistant history", value: "Step 5")]
-        case .display, .today, .about:
+                    InfoRow(title: "Assistant history", value: "Settings → Voice")]
+        case .display, .alarms, .today, .about:
             return []
         }
     }

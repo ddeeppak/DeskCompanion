@@ -21,7 +21,8 @@ Design: `../design/claude-design-v1/` · Plan: `../desk-companion-backlog.md`
 - [x] Step 2: Home data + Night clock (weather, sunrise/sunset, barometer trend, automatic night clock, paw icon)
 - [x] Step 3: Today (Calendar, Reminders, habits, Up Next + tasks on Home, reminder alert banner)
 - [x] Step 4: Focus timer (ring, presets, custom, sounds, chime, session done)
-- [ ] Step 5: Voice assistant (offline)
+- [x] Alarms (in-app, with backup notification) + custom focus sounds
+- [x] Step 5: Voice assistant (offline): speech, spoken replies, timers, alarms, reminders, lists, agenda, weather, focus, undo
 - [ ] Step 6: Local AI on PC
 - [ ] Step 7: Sensors
 - [ ] Step 8: Polish

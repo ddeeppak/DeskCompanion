@@ -39,7 +39,7 @@ final class WeatherService: ObservableObject {
             URLQueryItem(name: "longitude", value: lon),
             URLQueryItem(name: "current", value: "temperature_2m,weather_code,is_day,surface_pressure,pressure_msl"),
             URLQueryItem(name: "hourly", value: "temperature_2m,weather_code,is_day"),
-            URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,sunrise,sunset"),
+            URLQueryItem(name: "daily", value: "temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code"),
             URLQueryItem(name: "timezone", value: "auto"),
             URLQueryItem(name: "forecast_days", value: "2")
         ]
@@ -90,6 +90,9 @@ struct WeatherSnapshot: Codable {
     let hours: [Hour]
     let surfacePressure: Double?
     let seaLevelPressure: Double?
+    var tomorrowHigh: Double? = nil
+    var tomorrowLow: Double? = nil
+    var tomorrowCode: Int? = nil
 
     func nextHours(after date: Date, count: Int) -> [Hour] {
         Array(hours.filter { $0.time > date }.prefix(count))
@@ -136,7 +139,7 @@ struct WeatherSnapshot: Codable {
         let high = r.daily.temperature_2m_max.first.flatMap { $0 } ?? r.current.temperature_2m
         let low = r.daily.temperature_2m_min.first.flatMap { $0 } ?? r.current.temperature_2m
 
-        return WeatherSnapshot(
+        var snapshot = WeatherSnapshot(
             fetchedAt: Date(),
             temperature: r.current.temperature_2m,
             code: r.current.weather_code,
@@ -149,6 +152,15 @@ struct WeatherSnapshot: Codable {
             hours: hours,
             surfacePressure: r.current.surface_pressure,
             seaLevelPressure: r.current.pressure_msl)
+        if r.daily.temperature_2m_max.count > 1 { snapshot.tomorrowHigh = r.daily.temperature_2m_max[1] }
+        if r.daily.temperature_2m_min.count > 1 { snapshot.tomorrowLow = r.daily.temperature_2m_min[1] }
+        if let codes = r.daily.weather_code, codes.count > 1 { snapshot.tomorrowCode = codes[1] }
+        return snapshot
+    }
+
+    /// Rain, drizzle, showers or thunder.
+    static func isRainy(_ code: Int) -> Bool {
+        (51...67).contains(code) || (80...82).contains(code) || code >= 95
     }
 }
 
@@ -172,6 +184,7 @@ private struct OpenMeteoResponse: Decodable {
         let temperature_2m_min: [Double?]
         let sunrise: [String]
         let sunset: [String]
+        let weather_code: [Int?]?
     }
     let utc_offset_seconds: Int
     let current: Current

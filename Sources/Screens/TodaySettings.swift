@@ -35,7 +35,7 @@ struct TodaySettings: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text(planner.selectedListTitle)
-                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .semibold))
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(theme.accent)
                     }
@@ -49,7 +49,7 @@ struct TodaySettings: View {
                     if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                 } label: {
                     Text("Open iPhone Settings to allow access")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundColor(theme.accent)
                         .frame(height: 44)
                 }
@@ -96,7 +96,7 @@ struct TodaySettings: View {
                         .foregroundColor(theme.secondaryLabel)
                         .frame(width: 40, alignment: .leading)
                     Button("Add", action: addHabit)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundColor(theme.accent)
                         .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }

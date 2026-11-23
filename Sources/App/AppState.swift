@@ -47,6 +47,8 @@ final class AppState: ObservableObject {
     }
     @Published var railVisible = true
     @Published var aiStatus: AIStatus = .notSetUp
+    /// Opens a specific Settings section next time Settings appears (e.g. "alarms" from the assistant's Edit button).
+    @Published var pendingSettingsSection: String? = nil
     @Published var style: AppStyle {
         didSet { UserDefaults.standard.set(style.rawValue, forKey: Self.styleKey) }
     }

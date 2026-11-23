@@ -48,9 +48,12 @@ final class PlannerService: ObservableObject {
     private var alertedIDs: Set<String> = []
     private var snoozedUntil: [String: Date] = [:]
     private var started = false
+    private let voiceKey = "planner.voiceCreated"
+    private var voiceCreated: [String: Date] = [:]
 
     init() {
         selectedListID = UserDefaults.standard.string(forKey: "planner.reminderList")
+        voiceCreated = UserDefaults.standard.dictionary(forKey: "planner.voiceCreated") as? [String: Date] ?? [:]
     }
 
     deinit {
@@ -112,12 +115,17 @@ final class PlannerService: ObservableObject {
     }
 
     private func reloadEvents() {
-        guard calendarAccess == .granted else { events = []; return }
+        events = events(on: Date())
+    }
+
+    /// Events for any day (used by the assistant for "what's on tomorrow?").
+    func events(on day: Date) -> [DayEvent] {
+        guard calendarAccess == .granted else { return [] }
         let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return }
+        let start = calendar.startOfDay(for: day)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
-        events = store.events(matching: predicate)
+        return store.events(matching: predicate)
             .sorted { lhs, rhs in
                 if lhs.isAllDay != rhs.isAllDay { return lhs.isAllDay }
                 return lhs.startDate < rhs.startDate
@@ -209,14 +217,40 @@ final class PlannerService: ObservableObject {
     }
 
     func add(title: String) {
+        addReminder(title: title, due: nil, byVoice: false)
+    }
+
+    /// Creates a reminder (with an alert at `due`) in the chosen list. Returns its id, for Undo.
+    @discardableResult
+    func addReminder(title: String, due: Date?, byVoice: Bool) -> String? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let list = selectedList() else { return }
+        guard remindersAccess == .granted, !trimmed.isEmpty, let list = selectedList() else { return nil }
         let reminder = EKReminder(eventStore: store)
         reminder.title = trimmed
         reminder.calendar = list
-        try? store.save(reminder, commit: true)
+        if let due = due {
+            reminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due)
+            reminder.addAlarm(EKAlarm(absoluteDate: due))
+        }
+        do { try store.save(reminder, commit: true) } catch { return nil }
+        let id = reminder.calendarItemIdentifier
+        if byVoice {
+            voiceCreated[id] = Date()
+            UserDefaults.standard.set(voiceCreated, forKey: voiceKey)
+        }
+        reloadTasks()
+        return id
+    }
+
+    func deleteReminder(id: String) {
+        if let reminder = store.calendarItem(withIdentifier: id) as? EKReminder {
+            try? store.remove(reminder, commit: true)
+        }
         reloadTasks()
     }
+
+    /// When a reminder was created by voice (for "set by voice at 9:45 AM").
+    func voiceCreatedAt(_ id: String) -> Date? { voiceCreated[id] }
 
     // MARK: Due reminder alerts (banner over Home)
 

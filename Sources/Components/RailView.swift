@@ -4,6 +4,7 @@ import SwiftUI
 /// Selected item = filled symbol in the accent colour, others = outline in secondary label.
 struct RailView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var assistant: AssistantService
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -13,7 +14,7 @@ struct RailView: View {
                     app.screen = item
                 } label: {
                     Image(systemName: app.screen == item ? item.selectedSymbol : item.symbol)
-                        .font(.system(size: 22, weight: app.screen == item ? .semibold : .regular))
+                        .font(.system(size: 22, weight: app.screen == item ? .bold : .regular))
                         .foregroundColor(app.screen == item ? theme.accent : theme.secondaryLabel)
                         .shadow(color: app.screen == item ? (theme.glow ?? .clear) : .clear, radius: 8)
                         .frame(width: 52, height: 48)
@@ -26,10 +27,10 @@ struct RailView: View {
             Spacer(minLength: 8)
 
             Button {
-                app.screen = .assistant
+                assistant.listen()
             } label: {
                 Image(systemName: "mic.fill")
-                    .font(.system(size: 21, weight: .semibold))
+                    .font(.system(size: 21, weight: .bold))
                     .foregroundColor(theme.onAccent)
                     .frame(width: 50, height: 50)
                     .background(Circle().fill(theme.accent))

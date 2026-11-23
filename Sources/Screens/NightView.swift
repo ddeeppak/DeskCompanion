@@ -6,6 +6,7 @@ struct NightView: View {
     @EnvironmentObject private var night: NightMode
     @EnvironmentObject private var weather: WeatherService
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var alarms: AlarmStore
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -20,18 +21,19 @@ struct NightView: View {
                         .tracking(theme.style == .futuristic ? -188 * 0.05 : -188 * 0.04)
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
+                        .padding(.vertical, -188 * 0.165)      // design line-height 0.86
                     Text(subtitle(now))
-                        .font(.system(size: 19, weight: .medium))
+                        .font(.system(size: 19, weight: .semibold))
                         .opacity(0.8)
                         .padding(.top, 18)
-                    if let sunrise = weather.snapshot?.nextSunrise(after: now) {
-                        // Next alarm would go here (in-app alarm: decision pending). Shows sunrise meanwhile.
+                    if let chip = chip(now) {
+                        // Next alarm (within 24 h) as in the design; otherwise tomorrow's sunrise.
                         HStack(spacing: 7) {
-                            Image(systemName: "sunrise.fill")
+                            Image(systemName: chip.symbol)
                                 .font(.system(size: 15))
-                            Text("Sunrise \(TimeText.time(sunrise))")
+                            Text(chip.text)
                         }
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16, weight: .bold))
                         .padding(.horizontal, 15)
                         .frame(height: 34)
                         .background(Capsule().fill(theme.night.opacity(0.16)))
@@ -47,7 +49,7 @@ struct NightView: View {
                             .font(.system(size: 15))
                         Text("Tap to brighten")
                     }
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
                     .opacity(0.6)
                     .padding(.bottom, 16)
                 }
@@ -59,6 +61,16 @@ struct NightView: View {
                 night.peek()
             }
         }
+    }
+
+    private func chip(_ now: Date) -> (symbol: String, text: String)? {
+        if let next = alarms.nextAlarm, next.date.timeIntervalSince(now) < 24 * 3600 {
+            return ("bell.fill", TimeText.time(next.date))
+        }
+        if let sunrise = weather.snapshot?.nextSunrise(after: now) {
+            return ("sunrise.fill", "Sunrise \(TimeText.time(sunrise))")
+        }
+        return nil
     }
 
     private func subtitle(_ now: Date) -> String {

@@ -1,16 +1,27 @@
 import SwiftUI
 
-/// S4 Reminder alert: dimmed screen + blurred banner (448 wide, radius 22) with Snooze 10 min / Done.
-struct ReminderBanner: View {
-    let task: TaskItem
-    let onSnooze: () -> Void
-    let onDone: () -> Void
+/// S4-style alert: dimmed screen + blurred banner (448 wide, radius 22) with two buttons.
+/// Used for due reminders ("Snooze 10 min / Done") and finished timers ("+1 min / Stop").
+struct AlertBanner: View {
+    let title: String
+    let subtitle: String
+    let symbol: String?          // nil = paw badge
+    let secondaryTitle: String
+    let primaryTitle: String
+    let onSecondary: () -> Void
+    let onPrimary: () -> Void
     @Environment(\.theme) private var theme
 
-    init(task: TaskItem, onSnooze: @escaping () -> Void, onDone: @escaping () -> Void) {
-        self.task = task
-        self.onSnooze = onSnooze
-        self.onDone = onDone
+    init(title: String, subtitle: String, symbol: String? = nil,
+         secondaryTitle: String, primaryTitle: String,
+         onSecondary: @escaping () -> Void, onPrimary: @escaping () -> Void) {
+        self.title = title
+        self.subtitle = subtitle
+        self.symbol = symbol
+        self.secondaryTitle = secondaryTitle
+        self.primaryTitle = primaryTitle
+        self.onSecondary = onSecondary
+        self.onPrimary = onPrimary
     }
 
     var body: some View {
@@ -19,11 +30,11 @@ struct ReminderBanner: View {
 
             VStack(spacing: 0) {
                 HStack(alignment: .top, spacing: 12) {
-                    AppBadge()
+                    AppBadge(symbol: symbol)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text(task.title)
-                                .font(.system(size: 17, weight: .semibold))
+                            Text(title)
+                                .font(.system(size: 17, weight: .bold))
                                 .lineLimit(2)
                             Spacer(minLength: 6)
                             Text("now")
@@ -40,8 +51,8 @@ struct ReminderBanner: View {
                 Rectangle().fill(theme.separator).frame(height: 1)
 
                 HStack(spacing: 0) {
-                    Button(action: onSnooze) {
-                        Text("Snooze 10 min")
+                    Button(action: onSecondary) {
+                        Text(secondaryTitle)
                             .font(.system(size: 17))
                             .foregroundColor(theme.accent)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -49,9 +60,9 @@ struct ReminderBanner: View {
                     }
                     .buttonStyle(.plain)
                     Rectangle().fill(theme.separator).frame(width: 1)
-                    Button(action: onDone) {
-                        Text("Done")
-                            .font(.system(size: 17, weight: .semibold))
+                    Button(action: onPrimary) {
+                        Text(primaryTitle)
+                            .font(.system(size: 17, weight: .bold))
                             .foregroundColor(theme.accent)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .contentShape(Rectangle())
@@ -70,17 +81,15 @@ struct ReminderBanner: View {
             .padding(.top, 14)
         }
     }
-
-    private var subtitle: String {
-        if let due = task.dueDate { return "Reminder · due \(TimeText.time(due))" }
-        return "Reminder"
-    }
 }
 
-/// 40 pt app badge with the paw, gently pulsing.
+/// 40 pt app badge (paw, or an SF Symbol), gently pulsing.
 private struct AppBadge: View {
+    let symbol: String?
     @Environment(\.theme) private var theme
     @State private var pulse = false
+
+    init(symbol: String?) { self.symbol = symbol }
 
     var body: some View {
         ZStack {
@@ -92,12 +101,18 @@ private struct AppBadge: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(LinearGradient(gradient: Gradient(colors: [theme.accent2, theme.accent]),
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
-            Image("Paw")
-                .resizable()
-                .renderingMode(.template)
-                .scaledToFit()
-                .foregroundColor(.white)
-                .frame(width: 24, height: 24)
+            if let symbol = symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+            } else {
+                Image("Paw")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .foregroundColor(.white)
+                    .frame(width: 24, height: 24)
+            }
         }
         .frame(width: 40, height: 40)
         .onAppear { pulse = true }

@@ -5,21 +5,37 @@ import SwiftUI
 struct StatusCluster: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var battery: BatteryMonitor
+    @EnvironmentObject private var quickTimer: QuickTimer
     @Environment(\.theme) private var theme
 
     var body: some View {
         HStack(spacing: 12) {
+            if let end = quickTimer.endDate {
+                // Voice timer running: live countdown chip.
+                TimelineView(.periodic(from: Date(), by: 1)) { context in
+                    let left = max(0, Int(end.timeIntervalSince(context.date).rounded(.up)))
+                    HStack(spacing: 6) {
+                        Image(systemName: "timer").font(.system(size: 13, weight: .bold))
+                        Text(Self.countdown(left))
+                            .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    }
+                    .foregroundColor(theme.accent)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(Capsule().fill(theme.accentTint))
+                }
+            }
             HStack(spacing: 7) {
                 if app.aiStatus == .offline {
                     Image(systemName: "wifi.slash")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13, weight: .bold))
                 } else {
                     Circle()
                         .fill(aiColor)
                         .frame(width: 8, height: 8)
                 }
                 Text(aiText)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
             }
             .foregroundColor(app.aiStatus == .offline ? theme.red : theme.label)
             .padding(.horizontal, 12)
@@ -29,13 +45,22 @@ struct StatusCluster: View {
 
             HStack(spacing: 6) {
                 Text("\(battery.level)%")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .monospacedDigit()
                 Image(systemName: battery.symbol)
                     .font(.system(size: 16))
                     .foregroundColor(battery.charging ? theme.green : theme.label)
             }
         }
+    }
+
+    /// "9:41" or "1:05:00"
+    static func countdown(_ seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        let s = seconds % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%d:%02d", m, s)
     }
 
     private var aiColor: Color {
@@ -135,7 +160,7 @@ struct IconTile: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: 15, weight: .bold))
             .foregroundColor(.white)
             .frame(width: 29, height: 29)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(color))
@@ -169,7 +194,7 @@ struct InfoList: View {
                         .lineLimit(1)
                     if row.showsChevron {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 14, weight: .bold))
                             .foregroundColor(theme.tertiaryLabel)
                     }
                 }
@@ -241,7 +266,7 @@ struct ComingSoonView: View {
     var body: some View {
         HStack(spacing: 22) {
             Image(systemName: icon)
-                .font(.system(size: 40, weight: .medium))
+                .font(.system(size: 40, weight: .semibold))
                 .foregroundColor(theme.onAccent)
                 .frame(width: 104, height: 104)
                 .background(Circle().fill(theme.accent))
@@ -249,10 +274,10 @@ struct ComingSoonView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("Arrives in step \(step)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(theme.accent)
                 Text(headline)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 22, weight: .bold))
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(bullets, id: \.self) { item in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {

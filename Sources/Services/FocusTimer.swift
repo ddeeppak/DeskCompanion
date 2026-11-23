@@ -27,9 +27,10 @@ final class FocusTimer: ObservableObject {
     @Published var customFocusMinutes: Int { didSet { settingsChanged() } }
     @Published var customBreakMinutes: Int { didSet { settingsChanged() } }
     @Published var task: String { didSet { defaults.set(task, forKey: "focus.task") } }
-    @Published var ambient: SoundEngine.Ambient {
+    /// "off", "rain", "noise", "cafe" or "file:<name>" (see SoundLibrary)
+    @Published var soundID: String {
         didSet {
-            defaults.set(ambient.rawValue, forKey: "focus.sound")
+            defaults.set(soundID, forKey: "focus.sound")
             updateSound()
         }
     }
@@ -57,7 +58,7 @@ final class FocusTimer: ObservableObject {
         customFocusMinutes = d.object(forKey: "focus.customFocus") as? Int ?? 30
         customBreakMinutes = d.object(forKey: "focus.customBreak") as? Int ?? 5
         task = d.string(forKey: "focus.task") ?? "Focus"
-        ambient = SoundEngine.Ambient(rawValue: d.string(forKey: "focus.sound") ?? "") ?? .off
+        soundID = d.string(forKey: "focus.sound") ?? "off"
         dayKey = HabitStore.key(Date())
         if d.string(forKey: "focus.day") == dayKey {
             focusedToday = d.double(forKey: "focus.today")
@@ -228,7 +229,7 @@ final class FocusTimer: ObservableObject {
     }
 
     private func updateSound() {
-        SoundEngine.shared.setAmbient(state == .running && phase == .focus ? ambient : .off)
+        SoundEngine.shared.setFocusSound(state == .running && phase == .focus ? soundID : "off")
     }
 
     private func startTicker() {

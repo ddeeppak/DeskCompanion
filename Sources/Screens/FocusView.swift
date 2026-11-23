@@ -110,7 +110,7 @@ private struct CircleControl: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14, weight: bold ? .semibold : .medium))
+                .font(.system(size: 14, weight: bold ? .bold : .semibold))
                 .foregroundColor(foreground)
                 .frame(width: 62, height: 62)
                 .background(Circle().fill(fill))
@@ -159,7 +159,7 @@ private struct DoneView: View {
             HStack(spacing: 10) {
                 Button { focus.extend(minutes: 5) } label: {
                     Text("+5 min")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundColor(theme.label)
                         .padding(.horizontal, 18)
                         .frame(height: 48)
@@ -173,7 +173,7 @@ private struct DoneView: View {
                         Image(systemName: "play.fill").font(.system(size: 14))
                         Text(focusEnded ? "Start \(focus.breakMinutes)-min break" : "Start focus")
                     }
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 16, weight: .bold))
                     .foregroundColor(theme.onAccent)
                     .padding(.horizontal, 20)
                     .frame(height: 48)
@@ -189,7 +189,7 @@ private struct DoneView: View {
                         Image(systemName: "bell.fill").font(.system(size: 14))
                         Text("Chime playing · tap to stop")
                     }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(theme.accent)
                     .frame(height: 30)
                 }
@@ -203,6 +203,7 @@ private struct DoneView: View {
 
 private struct FocusSide: View {
     @EnvironmentObject private var focus: FocusTimer
+    @EnvironmentObject private var library: SoundLibrary
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -212,7 +213,7 @@ private struct FocusSide: View {
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryLabel)
                 TextField("What are you focusing on?", text: $focus.task)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 17, weight: .bold))
                     .submitLabel(.done)
             }
             .card(padding: EdgeInsets(top: 11, leading: 13, bottom: 11, trailing: 13))
@@ -235,7 +236,33 @@ private struct FocusSide: View {
                 Text("Sound")
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryLabel)
-                SegmentedBar(options: SoundEngine.Ambient.allCases.map { ($0, $0.label) }, selection: $focus.ambient)
+                let options = library.focusOptions
+                if options.count <= 4 {
+                    SegmentedBar(options: options, selection: $focus.soundID)
+                } else {
+                    // More than 4 choices (your own files): dropdown instead of segments.
+                    Menu {
+                        ForEach(options.indices, id: \.self) { index in
+                            Button(options[index].1) { focus.soundID = options[index].0 }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: focus.soundID == "off" ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                .foregroundColor(theme.accent)
+                            Text(library.label(for: focus.soundID))
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(theme.label)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(theme.secondaryLabel)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 44)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(theme.fill))
+                    }
+                }
             }
             .card(padding: EdgeInsets(top: 11, leading: 13, bottom: 11, trailing: 13))
 
@@ -290,7 +317,7 @@ struct SegmentedBar<Value: Hashable>: View {
                     selection = option.0
                 } label: {
                     Text(option.1)
-                        .font(.system(size: 14, weight: selected ? .semibold : .regular).monospacedDigit())
+                        .font(.system(size: 14, weight: selected ? .bold : .regular).monospacedDigit())
                         .foregroundColor(theme.label)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -327,7 +354,7 @@ private struct MinuteStepper: View {
         HStack(spacing: 2) {
             button("minus") { value = max(range.lowerBound, value - step) }
             VStack(spacing: 0) {
-                Text("\(value)").font(.system(size: 15, weight: .semibold).monospacedDigit())
+                Text("\(value)").font(.system(size: 15, weight: .bold).monospacedDigit())
                 Text(label).font(.system(size: 11)).foregroundColor(theme.secondaryLabel)
             }
             .frame(maxWidth: .infinity)
@@ -340,7 +367,7 @@ private struct MinuteStepper: View {
     private func button(_ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundColor(theme.accent)
                 .frame(width: 32, height: 40)
                 .contentShape(Rectangle())

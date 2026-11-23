@@ -57,20 +57,21 @@ struct Theme {
     let clockSize: CGFloat       // Home clock: 128 (Futuristic 110)
     let clockTracking: CGFloat   // letter-spacing for big digits (pt at clockSize)
 
-    /// Large digits (clock, timer). Calm: SF Pro Thin · Futuristic: SF Mono Light · Warm: SF Rounded Light
+    /// Large digits (clock, timer). Regular weight: matches how the design preview actually renders.
+    /// Calm: SF Pro · Futuristic: SF Mono · Warm: SF Rounded
     func clockFont(_ size: CGFloat) -> Font {
         switch style {
-        case .calm: return Font.system(size: size, weight: .thin, design: .default).monospacedDigit()
-        case .futuristic: return Font.system(size: size, weight: .light, design: .monospaced)
-        case .warm: return Font.system(size: size, weight: .light, design: .rounded).monospacedDigit()
+        case .calm: return Font.system(size: size, weight: .regular, design: .default).monospacedDigit()
+        case .futuristic: return Font.system(size: size, weight: .regular, design: .monospaced)
+        case .warm: return Font.system(size: size, weight: .regular, design: .rounded).monospacedDigit()
         }
     }
 
     /// Tracking (letter-spacing) in points for big digits of a given size.
     func tracking(for size: CGFloat) -> CGFloat { size * clockTracking }
 
-    /// Weight for big numbers: Calm = Thin (200) · Futuristic / Warm = Light (300)
-    var numberWeight: Font.Weight { style == .calm ? .thin : .light }
+    /// Weight for big numbers (temperature, timer, totals): Regular, as rendered in the design.
+    var numberWeight: Font.Weight { .regular }
 
     /// Numbers (temperature 44, focus total 28, ...). Defaults to the style's number weight.
     func numberFont(_ size: CGFloat, weight: Font.Weight? = nil) -> Font {

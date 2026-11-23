@@ -13,7 +13,7 @@ struct HomeView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Text(Greeting.text(for: now))
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: 17, weight: .bold))
                         .foregroundColor(theme.secondaryLabel)
                         .lineLimit(1)
                     Spacer(minLength: 8)
@@ -26,7 +26,7 @@ struct HomeView: View {
                         ClockText(date: now)
                             .padding(.top, 10)
                         Text(DateText.long(now))
-                            .font(.system(size: 22, weight: .medium))
+                            .font(.system(size: 22, weight: .semibold))
                             .padding(.top, 14)
                         Spacer(minLength: 8)
                         SensorRow()
@@ -65,8 +65,10 @@ struct ClockText: View {
                 .shadow(color: theme.glow ?? .clear, radius: 16)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                // Design uses line-height 0.9; SwiftUI adds ~1.19. Trim the extra space above and below.
+                .padding(.vertical, -theme.clockSize * 0.145)
             Text(hour < 12 ? "AM" : "PM")
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 22, weight: .bold))
                 .foregroundColor(theme.secondaryLabel)
                 .padding(.top, 12)
         }
@@ -140,7 +142,7 @@ private struct SensorRow: View {
             HStack(spacing: 6) {
                 if let tint = tint {
                     Image(systemName: symbol)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: 17, weight: .bold))
                         .foregroundColor(tint)
                 } else {
                     Image(systemName: symbol)
@@ -148,7 +150,7 @@ private struct SensorRow: View {
                         .font(.system(size: 17))
                 }
                 Text(value)
-                    .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                    .font(.system(size: 17, weight: .bold).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -188,10 +190,10 @@ private struct WeatherCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
                         Text("My Location")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 15, weight: .bold))
                             .lineLimit(1)
                         Image(systemName: "location.fill")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: 10, weight: .bold))
                     }
                     Text("\(Int(w.temperature.rounded()))°")
                         .font(theme.numberFont(44))
@@ -205,11 +207,11 @@ private struct WeatherCard: View {
                         .font(.system(size: 25))
                         .frame(height: 28)
                     Text(WeatherCode.text(w.code))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 13, weight: .bold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                     Text("H:\(Int(w.high.rounded()))° L:\(Int(w.low.rounded()))°")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.secondaryLabel)
                         .lineLimit(1)
                 }
@@ -224,14 +226,14 @@ private struct WeatherCard: View {
                 ForEach(w.nextHours(after: now, count: 4), id: \.time) { hour in
                     VStack(spacing: 5) {
                         Text(TimeText.hour(hour.time))
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 13, weight: .bold))
                             .foregroundColor(theme.secondaryLabel)
                         Image(systemName: WeatherCode.symbol(hour.code, isDay: hour.isDay))
                             .symbolRenderingMode(.multicolor)
                             .font(.system(size: 17))
                             .frame(height: 20)
                         Text("\(Int(hour.temperature.rounded()))°")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 15, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -245,9 +247,9 @@ private struct WeatherCard: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text("My Location")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 15, weight: .bold))
                 Image(systemName: "location.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10, weight: .bold))
             }
             if location.isDenied {
                 Text("Location is off, so weather can't load.")
@@ -260,7 +262,7 @@ private struct WeatherCard: View {
                     }
                 } label: {
                     Text("Allow in Settings")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundColor(theme.accent)
                         .frame(height: 44)
                 }
@@ -292,7 +294,7 @@ private struct UpNextCard: View {
         let next = planner.nextEvent(after: now)
         VStack(alignment: .leading, spacing: 0) {
             Text("Up Next")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundColor(theme.accent)
             HStack(alignment: .top, spacing: 9) {
                 RoundedRectangle(cornerRadius: 2)
@@ -300,7 +302,7 @@ private struct UpNextCard: View {
                     .frame(width: 4)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title(next))
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
                     Text(detail(next))
                         .font(.system(size: 13).monospacedDigit())
@@ -369,7 +371,7 @@ private struct TasksCard: View {
             .padding(3)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Today’s tasks")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 15, weight: .bold))
                 Text(nextLine)
                     .font(.system(size: 13))
                     .foregroundColor(theme.secondaryLabel)

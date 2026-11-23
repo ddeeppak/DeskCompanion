@@ -39,7 +39,7 @@ private struct CardHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.system(size: 15, weight: .semibold))
+            Text(title).font(.system(size: 15, weight: .bold))
             Spacer(minLength: 4)
             Text(trailing)
                 .font(.system(size: 13).monospacedDigit())
@@ -67,7 +67,7 @@ private struct EmptyColumn: View {
                 .font(.system(size: 36))
                 .foregroundColor(theme.secondaryLabel)
                 .padding(.bottom, 6)
-            Text(title).font(.system(size: 17, weight: .semibold))
+            Text(title).font(.system(size: 17, weight: .bold))
             Text(message)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryLabel)
@@ -97,7 +97,7 @@ private struct PermissionPrompt: View {
                 if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
             } label: {
                 Text("Allow in Settings")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundColor(theme.accent)
                     .frame(height: 44)
             }
@@ -189,7 +189,7 @@ private struct ScheduleCard: View {
                     .frame(width: 3)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(event.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14, weight: .bold))
                         .lineLimit(1)
                     if let location = event.location, !past {
                         Text(location)
@@ -232,6 +232,7 @@ private struct ScheduleCard: View {
 private struct TasksCard: View {
     @EnvironmentObject private var planner: PlannerService
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var assistant: AssistantService
     @Environment(\.theme) private var theme
     @State private var adding = false
     @State private var newTitle = ""
@@ -250,19 +251,19 @@ private struct TasksCard: View {
                         .font(.system(size: 36))
                         .foregroundColor(theme.secondaryLabel)
                         .padding(.bottom, 6)
-                    Text("No Tasks").font(.system(size: 17, weight: .semibold))
+                    Text("No Tasks").font(.system(size: 17, weight: .bold))
                     Text("Say “Add buy milk to my list”.")
                         .font(.system(size: 13))
                         .foregroundColor(theme.secondaryLabel)
                         .multilineTextAlignment(.center)
                     Button {
-                        app.screen = .assistant
+                        assistant.listen()
                     } label: {
                         HStack(spacing: 7) {
                             Image(systemName: "mic.fill")
                             Text("Add by Voice")
                         }
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundColor(theme.onAccent)
                         .padding(.horizontal, 18)
                         .frame(height: 44)
@@ -350,14 +351,14 @@ private struct TasksCard: View {
             Button { startAdding() } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "plus.circle.fill").font(.system(size: 22))
-                    Text("New Task").font(.system(size: 15, weight: .semibold))
+                    Text("New Task").font(.system(size: 15, weight: .bold))
                 }
                 .foregroundColor(theme.accent)
                 .frame(height: 44)
             }
             .buttonStyle(.plain)
             Spacer()
-            Button { app.screen = .assistant } label: {
+            Button { assistant.listen() } label: {
                 Image(systemName: "mic.fill")
                     .font(.system(size: 19))
                     .foregroundColor(theme.accent)
@@ -384,14 +385,14 @@ private struct HabitsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Habits").font(.system(size: 15, weight: .semibold))
+                Text("Habits").font(.system(size: 15, weight: .bold))
                 Spacer(minLength: 4)
                 if habits.perfectStreak > 0 {
                     HStack(spacing: 3) {
                         Image(systemName: "flame.fill").font(.system(size: 13))
                         Text("\(habits.perfectStreak) days")
                     }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(theme.orange)
                 }
             }
