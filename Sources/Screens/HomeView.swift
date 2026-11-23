@@ -57,7 +57,8 @@ struct ClockText: View {
 
         HStack(alignment: .top, spacing: 6) {
             Text("\(hour12):\(String(format: "%02d", minute))")
-                .font(theme.clockFont(theme.style == .futuristic ? 108 : 126))
+                .font(theme.clockFont(theme.clockSize))
+                .tracking(theme.tracking(for: theme.clockSize))
                 .shadow(color: theme.glow ?? .clear, radius: 16)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)

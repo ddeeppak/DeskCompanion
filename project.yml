@@ -17,11 +17,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.deskcompanion.u7k3q2
         PRODUCT_NAME: DeskCompanion
         MARKETING_VERSION: "0.1"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "2"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
         GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # paw icon (Sources/Assets.xcassets)
         INFOPLIST_KEY_CFBundleDisplayName: "Desk Companion"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         # Landscape only, both directions (Home button left or right)

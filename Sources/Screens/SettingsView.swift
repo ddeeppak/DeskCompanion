@@ -45,39 +45,44 @@ struct SettingsView: View {
     @State private var section: SettingsSection = .display
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ScreenHeader(title: "Settings")
-            HStack(alignment: .top, spacing: 16) {
-                VStack(spacing: 2) {
-                    ForEach(SettingsSection.allCases) { item in
-                        Button {
-                            section = item
-                        } label: {
-                            HStack(spacing: 10) {
-                                IconTile(symbol: item.icon, color: item.tint)
-                                Text(item.title)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 8)
-                            .frame(height: 42)
-                            .foregroundColor(section == item ? theme.onAccent : theme.label)
-                            .background(RoundedRectangle(cornerRadius: theme.controlRadius, style: .continuous)
-                                            .fill(section == item ? theme.accent : Color.clear))
-                            .contentShape(Rectangle())
+        // Design: no top bar on Settings. Title sits above the section list.
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Settings")
+                    .font(.system(size: 28, weight: .bold))
+                    .frame(height: 34)
+                    .padding(.leading, 4)
+                    .padding(.bottom, 8)
+                ForEach(SettingsSection.allCases) { item in
+                    let selected = section == item
+                    Button {
+                        section = item
+                    } label: {
+                        HStack(spacing: 10) {
+                            IconTile(symbol: item.icon,
+                                     color: selected ? Color.white.opacity(0.22) : item.tint)
+                            Text(item.title)
+                                .font(.system(size: 15, weight: selected ? .semibold : .regular))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
                         }
-                        .buttonStyle(.plain)
+                        .padding(.horizontal, 8)
+                        .frame(height: 44)
+                        .foregroundColor(selected ? theme.onAccent : theme.label)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(selected ? theme.accent : Color.clear))
+                        .contentShape(Rectangle())
                     }
-                    Spacer(minLength: 0)
+                    .buttonStyle(.plain)
                 }
-                .frame(width: 178)
+                Spacer(minLength: 0)
+            }
+            .frame(width: 184)
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    detail
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 8)
-                }
+            ScrollView(.vertical, showsIndicators: false) {
+                detail
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 8)
             }
         }
         .screenPadding()
@@ -178,7 +183,7 @@ private struct StyleTile: View {
                     }
                 }
                 Text(style.subtitle)
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 13))
                     .foregroundColor(current.secondaryLabel)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -198,7 +203,7 @@ private struct AboutSettings: View {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "1 · Foundation"),
+                InfoRow(title: "Build step", value: "1.1 · Foundation + design fixes"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])

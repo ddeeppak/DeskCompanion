@@ -13,7 +13,7 @@ struct RailView: View {
                     app.screen = item
                 } label: {
                     Image(systemName: app.screen == item ? item.selectedSymbol : item.symbol)
-                        .font(.system(size: 21, weight: app.screen == item ? .semibold : .regular))
+                        .font(.system(size: 22, weight: app.screen == item ? .semibold : .regular))
                         .foregroundColor(app.screen == item ? theme.accent : theme.secondaryLabel)
                         .shadow(color: app.screen == item ? (theme.glow ?? .clear) : .clear, radius: 8)
                         .frame(width: 52, height: 48)
@@ -38,8 +38,8 @@ struct RailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Talk to assistant")
         }
-        .padding(.top, 14)
-        .padding(.bottom, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
         .frame(width: 64)
         .frame(maxHeight: .infinity)
         .background(theme.bar.ignoresSafeArea())

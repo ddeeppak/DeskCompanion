@@ -51,6 +51,11 @@ struct Theme {
     let glow: Color?             // Futuristic glow
     let segmentSelected: Color
     let toggleOn: Color
+    let yellow: Color
+    let indigo: Color            // event colour
+    let material: Color          // banner / sheet background
+    let clockSize: CGFloat       // Home clock: 128 (Futuristic 110)
+    let clockTracking: CGFloat   // letter-spacing for big digits (pt at clockSize)
 
     /// Large digits (clock, timer). Calm: SF Pro Thin · Futuristic: SF Mono Light · Warm: SF Rounded Light
     func clockFont(_ size: CGFloat) -> Font {
@@ -60,6 +65,9 @@ struct Theme {
         case .warm: return Font.system(size: size, weight: .light, design: .rounded).monospacedDigit()
         }
     }
+
+    /// Tracking (letter-spacing) in points for big digits of a given size.
+    func tracking(for size: CGFloat) -> CGFloat { size * clockTracking }
 
     /// Medium numbers (temperature, stats)
     func numberFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
@@ -94,7 +102,11 @@ struct Theme {
                 cardRadius: 20, listRadius: 12, controlRadius: 12,
                 cardBorder: nil, glow: nil,
                 segmentSelected: Color(hex: 0x636366),
-                toggleOn: Color(hex: 0x30D158))
+                toggleOn: Color(hex: 0x30D158),
+                yellow: Color(hex: 0xFFD60A),
+                indigo: Color(hex: 0x5E5CE6),
+                material: .rgba(44, 44, 46, 0.78),
+                clockSize: 128, clockTracking: -0.02)
         case .futuristic:
             return Theme(
                 style: .futuristic,
@@ -118,7 +130,11 @@ struct Theme {
                 cardBorder: .rgba(100, 210, 255, 0.22),
                 glow: .rgba(100, 210, 255, 0.45),
                 segmentSelected: .rgba(100, 210, 255, 0.3),
-                toggleOn: Color(hex: 0x64D2FF))
+                toggleOn: Color(hex: 0x64D2FF),
+                yellow: Color(hex: 0xFFD60A),
+                indigo: Color(hex: 0x7D7AFF),
+                material: .rgba(6, 24, 32, 0.82),
+                clockSize: 110, clockTracking: -0.05)
         case .warm:
             return Theme(
                 style: .warm,
@@ -141,7 +157,11 @@ struct Theme {
                 cardRadius: 24, listRadius: 16, controlRadius: 16,
                 cardBorder: nil, glow: nil,
                 segmentSelected: .rgba(255, 236, 220, 0.26),
-                toggleOn: Color(hex: 0xFF9F0A))
+                toggleOn: Color(hex: 0xFF9F0A),
+                yellow: Color(hex: 0xFFD60A),
+                indigo: Color(hex: 0x9F8CFF),
+                material: .rgba(52, 36, 30, 0.8),
+                clockSize: 128, clockTracking: -0.025)
         }
     }
 }

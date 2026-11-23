@@ -10,22 +10,26 @@ struct StatusCluster: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 7) {
-                Circle()
-                    .fill(aiColor)
-                    .frame(width: 8, height: 8)
-                    .shadow(color: app.aiStatus == .online ? aiColor : .clear, radius: 4)
+                if app.aiStatus == .offline {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 13, weight: .semibold))
+                } else {
+                    Circle()
+                        .fill(aiColor)
+                        .frame(width: 8, height: 8)
+                }
                 Text(aiText)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(app.aiStatus == .offline ? theme.red : theme.label)
             }
+            .foregroundColor(app.aiStatus == .offline ? theme.red : theme.label)
             .padding(.horizontal, 12)
             .frame(height: 28)
-            .background(Capsule().fill(theme.surface))
-            .overlay(Capsule().stroke(theme.cardBorder ?? .clear, lineWidth: 1))
+            .background(Capsule().fill(app.aiStatus == .offline ? theme.red.opacity(0.18) : theme.surface))
+            .overlay(Capsule().stroke(app.aiStatus == .offline ? Color.clear : (theme.cardBorder ?? .clear), lineWidth: 1))
 
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Text("\(battery.level)%")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .monospacedDigit()
                 Image(systemName: battery.symbol)
                     .font(.system(size: 16))
@@ -121,7 +125,7 @@ struct SectionLabel: View {
         Text(text.uppercased())
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(theme.secondaryLabel)
-            .padding(.leading, 4)
+            .padding(.leading, 14)
     }
 }
 
@@ -131,9 +135,9 @@ struct IconTile: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 15, weight: .semibold))
             .foregroundColor(.white)
-            .frame(width: 28, height: 28)
+            .frame(width: 29, height: 29)
             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(color))
     }
 }

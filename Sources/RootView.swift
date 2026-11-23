@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         let theme = Theme.make(app.style)
@@ -20,11 +21,18 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .statusBar(hidden: true)
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { app.registerTouch() })
+        // Any touch (press or drag) brings the rail back and restarts the 30 s timer.
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in app.touchBegan() })
         .onAppear {
             // Desk display: never auto-lock while the app is open.
             UIApplication.shared.isIdleTimerDisabled = true
             app.scheduleRailHide()
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                UIApplication.shared.isIdleTimerDisabled = true
+                app.registerTouch()
+            }
         }
     }
 

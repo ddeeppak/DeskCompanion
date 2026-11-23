@@ -62,6 +62,16 @@ final class AppState: ObservableObject {
         style = AppStyle(rawValue: saved) ?? .calm
     }
 
+    private var lastTouch = Date.distantPast
+
+    /// Called continuously while a finger moves; throttled so the timer restarts at most twice a second.
+    func touchBegan() {
+        let now = Date()
+        guard now.timeIntervalSince(lastTouch) > 0.5 else { return }
+        lastTouch = now
+        registerTouch()
+    }
+
     /// Call on any touch: shows the rail again and restarts the 30 s timer.
     func registerTouch() {
         if !railVisible {
