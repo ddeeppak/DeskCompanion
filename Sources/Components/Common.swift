@@ -123,7 +123,7 @@ struct SectionLabel: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 13))
             .foregroundColor(theme.secondaryLabel)
             .padding(.leading, 14)
     }
@@ -164,12 +164,12 @@ struct InfoList: View {
                         .font(.system(size: 16))
                     Spacer(minLength: 8)
                     Text(row.value)
-                        .font(.system(size: 15))
+                        .font(.system(size: 16))
                         .foregroundColor(theme.secondaryLabel)
                         .lineLimit(1)
                     if row.showsChevron {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundColor(theme.tertiaryLabel)
                     }
                 }
@@ -184,6 +184,43 @@ struct InfoList: View {
         .overlay(RoundedRectangle(cornerRadius: theme.listRadius, style: .continuous)
                     .stroke(theme.cardBorder ?? .clear, lineWidth: 1))
     }
+}
+
+/// One 44 pt row inside a grouped box (for rows with controls).
+struct SettingsRow<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        HStack(spacing: 10) { content }
+            .font(.system(size: 16))
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+    }
+}
+
+struct RowSeparator: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Rectangle().fill(theme.separator).frame(height: 0.5).padding(.leading, 14)
+    }
+}
+
+struct GroupedBox: ViewModifier {
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .background(RoundedRectangle(cornerRadius: theme.listRadius, style: .continuous).fill(theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: theme.listRadius, style: .continuous)
+                        .stroke(theme.cardBorder ?? .clear, lineWidth: 1))
+    }
+}
+
+extension View {
+    func groupedBox() -> some View { modifier(GroupedBox()) }
 }
 
 /// Placeholder used by screens that arrive in later build steps.

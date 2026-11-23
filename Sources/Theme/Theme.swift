@@ -69,12 +69,16 @@ struct Theme {
     /// Tracking (letter-spacing) in points for big digits of a given size.
     func tracking(for size: CGFloat) -> CGFloat { size * clockTracking }
 
-    /// Medium numbers (temperature, stats)
-    func numberFont(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+    /// Weight for big numbers: Calm = Thin (200) · Futuristic / Warm = Light (300)
+    var numberWeight: Font.Weight { style == .calm ? .thin : .light }
+
+    /// Numbers (temperature 44, focus total 28, ...). Defaults to the style's number weight.
+    func numberFont(_ size: CGFloat, weight: Font.Weight? = nil) -> Font {
+        let w = weight ?? numberWeight
         switch style {
-        case .calm: return Font.system(size: size, weight: weight, design: .default).monospacedDigit()
-        case .futuristic: return Font.system(size: size, weight: weight, design: .monospaced)
-        case .warm: return Font.system(size: size, weight: weight, design: .rounded).monospacedDigit()
+        case .calm: return Font.system(size: size, weight: w, design: .default).monospacedDigit()
+        case .futuristic: return Font.system(size: size, weight: w, design: .monospaced)
+        case .warm: return Font.system(size: size, weight: w, design: .rounded).monospacedDigit()
         }
     }
 

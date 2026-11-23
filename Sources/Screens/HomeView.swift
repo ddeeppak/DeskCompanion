@@ -1,40 +1,47 @@
 import SwiftUI
+import UIKit
 
-/// 01 Home (ambient default). Step 1: live clock, date, greeting, layout.
-/// Weather / sunrise / pressure arrive in step 2, Up Next + tasks in step 3, noise in step 7.
+/// 01 Home (ambient default). Layout and type follow the Claude Design export:
+/// greeting + status row (30) · clock 128 Thin · date 22 Medium · sensor row 17 Semibold / 13
+/// right column 244: weather · Up Next (Calendar) · tasks (Reminders).
 struct HomeView: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
         TimelineView(.everyMinute) { context in
             let now = context.date
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
                     Text(Greeting.text(for: now))
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(theme.secondaryLabel)
-                        .frame(height: 34)
-                    ClockText(date: now)
-                        .padding(.top, 2)
-                    Text(DateText.long(now))
-                        .font(.system(size: 22, weight: .medium))
-                        .padding(.top, 2)
+                        .lineLimit(1)
                     Spacer(minLength: 8)
-                    SensorRow()
+                    StatusCluster()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 30)
 
-                VStack(spacing: 10) {
-                    HStack { Spacer(); StatusCluster() }
-                        .frame(height: 34)
-                    PlaceholderCard(title: "My Location", symbol: "cloud.sun.fill",
-                                    message: "Weather and the next 4 hours arrive in step 2.", tall: true)
-                    PlaceholderCard(title: "Up Next", symbol: "calendar",
-                                    message: "Your next calendar event arrives in step 3.")
-                    PlaceholderCard(title: "Today's tasks", symbol: "checklist",
-                                    message: "Task progress arrives in step 3.")
+                HStack(alignment: .top, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ClockText(date: now)
+                            .padding(.top, 10)
+                        Text(DateText.long(now))
+                            .font(.system(size: 22, weight: .medium))
+                            .padding(.top, 14)
+                        Spacer(minLength: 8)
+                        SensorRow()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(spacing: 10) {
+                        WeatherCard(now: now)
+                        UpNextCard(now: now)
+                        TasksCard()
+                            .frame(maxHeight: .infinity)
+                    }
+                    .frame(width: 244)
                 }
-                .frame(width: 222)
+                .padding(.top, 8)
             }
             .screenPadding()
         }
@@ -50,13 +57,9 @@ struct ClockText: View {
     init(date: Date) { self.date = date }
 
     var body: some View {
-        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
-        let hour = parts.hour ?? 0
-        let minute = parts.minute ?? 0
-        let hour12 = hour % 12 == 0 ? 12 : hour % 12
-
-        HStack(alignment: .top, spacing: 6) {
-            Text("\(hour12):\(String(format: "%02d", minute))")
+        let hour = Calendar.current.component(.hour, from: date)
+        HStack(alignment: .top, spacing: 8) {
+            Text(TimeText.clock(date))
                 .font(theme.clockFont(theme.clockSize))
                 .tracking(theme.tracking(for: theme.clockSize))
                 .shadow(color: theme.glow ?? .clear, radius: 16)
@@ -65,7 +68,7 @@ struct ClockText: View {
             Text(hour < 12 ? "AM" : "PM")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundColor(theme.secondaryLabel)
-                .padding(.top, 18)
+                .padding(.top, 12)
         }
     }
 }
@@ -99,70 +102,292 @@ enum DateText {
     static func short(_ date: Date) -> String { shortFormatter.string(from: date) }
 }
 
-// MARK: - Bottom sensor row (values arrive in steps 2 and 7)
+// MARK: - Sensor row: Sunrise · Sunset · Noise · Pressure (4 equal columns)
 
 private struct SensorRow: View {
+    @EnvironmentObject private var weather: WeatherService
+    @EnvironmentObject private var pressure: PressureService
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 22) {
-            item(symbol: "sunrise.fill", color: theme.orange, value: "--:--", label: "Sunrise")
-            item(symbol: "sunset.fill", color: theme.orange, value: "--:--", label: "Sunset")
-            item(symbol: "waveform", color: theme.green, value: "-- dB", label: "Noise")
-            item(symbol: "gauge", color: theme.accent2, value: "----", label: "hPa")
+        let snapshot = weather.snapshot
+        HStack(alignment: .top, spacing: 8) {
+            item(symbol: "sunrise.fill", tint: nil,
+                 value: snapshot.map { TimeText.clock($0.sunrise) } ?? "--:--", label: "Sunrise")
+            item(symbol: "sunset.fill", tint: nil,
+                 value: snapshot.map { TimeText.clock($0.sunset) } ?? "--:--", label: "Sunset")
+            item(symbol: "waveform", tint: theme.green,
+                 value: "--", label: "Noise")                       // noise meter arrives in step 7
+            item(symbol: "gauge", tint: theme.accent2,
+                 value: pressureValue(snapshot), label: pressureLabel)
         }
     }
 
-    private func item(symbol: String, color: Color, value: String, label: String) -> some View {
+    private func pressureValue(_ snapshot: WeatherSnapshot?) -> String {
+        if let value = pressure.displayValue(seaLevelOffset: snapshot?.seaLevelOffset) {
+            return "\(Int(value.rounded()))"
+        }
+        if let msl = snapshot?.seaLevelPressure { return "\(Int(msl.rounded()))" }
+        return "----"
+    }
+
+    private var pressureLabel: String {
+        pressure.trend == .unknown ? "hPa" : "hPa · \(pressure.trend.text)"
+    }
+
+    private func item(symbol: String, tint: Color?, value: String, label: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(color)
+                if let tint = tint {
+                    Image(systemName: symbol)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(tint)
+                } else {
+                    Image(systemName: symbol)
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: 17))
+                }
                 Text(value)
-                    .font(theme.numberFont(19, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             Text(label)
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryLabel)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Weather card
+
+private struct WeatherCard: View {
+    let now: Date
+    @EnvironmentObject private var weather: WeatherService
+    @EnvironmentObject private var location: LocationService
+    @Environment(\.theme) private var theme
+
+    init(now: Date) { self.now = now }
+
+    var body: some View {
+        Group {
+            if let snapshot = weather.snapshot {
+                content(snapshot)
+            } else {
+                emptyState
+            }
+        }
+        .card()
+    }
+
+    private func content(_ w: WeatherSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text("My Location")
+                            .font(.system(size: 15, weight: .semibold))
+                            .lineLimit(1)
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    Text("\(Int(w.temperature.rounded()))°")
+                        .font(theme.numberFont(44))
+                        .shadow(color: theme.glow ?? .clear, radius: 12)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Image(systemName: WeatherCode.symbol(w.code, isDay: w.isDay))
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: 25))
+                        .frame(height: 28)
+                    Text(WeatherCode.text(w.code))
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text("H:\(Int(w.high.rounded()))° L:\(Int(w.low.rounded()))°")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.secondaryLabel)
+                        .lineLimit(1)
+                }
+            }
+
+            Rectangle()
+                .fill(theme.separator)
+                .frame(height: 1)
+                .padding(.top, 10)
+
+            HStack(spacing: 0) {
+                ForEach(w.nextHours(after: now, count: 4), id: \.time) { hour in
+                    VStack(spacing: 5) {
+                        Text(TimeText.hour(hour.time))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.secondaryLabel)
+                        Image(systemName: WeatherCode.symbol(hour.code, isDay: hour.isDay))
+                            .symbolRenderingMode(.multicolor)
+                            .font(.system(size: 17))
+                            .frame(height: 20)
+                        Text("\(Int(hour.temperature.rounded()))°")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.top, 9)
+        }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text("My Location")
+                    .font(.system(size: 15, weight: .semibold))
+                Image(systemName: "location.fill")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            if location.isDenied {
+                Text("Location is off, so weather can't load.")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryLabel)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Text("Allow in Settings")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.accent)
+                        .frame(height: 44)
+                }
+                .buttonStyle(.plain)
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(weather.failed ? "Weather unavailable · retrying" : "Loading weather…")
+                        .font(.system(size: 13))
+                        .foregroundColor(theme.secondaryLabel)
+                }
+                .frame(height: 44)
+            }
         }
     }
 }
 
-// MARK: - Placeholder card
+// MARK: - Up Next (next calendar event today)
 
-private struct PlaceholderCard: View {
-    let title: String
-    let symbol: String
-    let message: String
-    let tall: Bool
+private struct UpNextCard: View {
+    let now: Date
+    @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var planner: PlannerService
     @Environment(\.theme) private var theme
 
-    init(title: String, symbol: String, message: String, tall: Bool = false) {
-        self.title = title
-        self.symbol = symbol
-        self.message = message
-        self.tall = tall
-    }
+    init(now: Date) { self.now = now }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.accent)
-                Spacer(minLength: 0)
-                Image(systemName: symbol)
-                    .font(.system(size: 15))
-                    .foregroundColor(theme.tertiaryLabel)
+        let next = planner.nextEvent(after: now)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Up Next")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.accent)
+            HStack(alignment: .top, spacing: 9) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(next?.color ?? theme.tertiaryLabel)
+                    .frame(width: 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title(next))
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                    Text(detail(next))
+                        .font(.system(size: 13).monospacedDigit())
+                        .foregroundColor(theme.secondaryLabel)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
             }
-            Text(message)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryLabel)
-                .fixedSize(horizontal: false, vertical: true)
-            if tall { Spacer(minLength: 0) }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 6)
         }
-        .frame(maxHeight: tall ? .infinity : nil, alignment: .top)
-        .card()
+        .card(padding: EdgeInsets(top: 11, leading: 14, bottom: 11, trailing: 14))
+        .contentShape(Rectangle())
+        .onTapGesture { app.screen = .today }
+    }
+
+    private func title(_ event: DayEvent?) -> String {
+        if planner.calendarAccess == .denied { return "Calendar is off" }
+        return event?.title ?? "Nothing else today"
+    }
+
+    private func detail(_ event: DayEvent?) -> String {
+        if planner.calendarAccess == .denied { return "Allow access in Settings" }
+        guard let event = event else { return "Your calendar is clear" }
+        if event.start <= now { return "Now · until \(TimeText.time(event.end))" }
+        let range = "\(TimeText.clock(event.start)) – \(TimeText.time(event.end))"
+        return "\(range) · in \(Countdown.text(from: now, to: event.start))"
+    }
+}
+
+enum Countdown {
+    /// "2 h 18 m" / "18 m"
+    static func text(from now: Date, to date: Date) -> String {
+        let minutes = max(1, Int((date.timeIntervalSince(now) / 60).rounded(.up)))
+        let h = minutes / 60
+        let m = minutes % 60
+        if h == 0 { return "\(m) m" }
+        return m == 0 ? "\(h) h" : "\(h) h \(m) m"
+    }
+}
+
+// MARK: - Today's tasks (ring + next task)
+
+private struct TasksCard: View {
+    @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var planner: PlannerService
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let total = planner.tasks.count
+        let done = planner.doneCount
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().stroke(theme.fill, lineWidth: 6)
+                Circle()
+                    .trim(from: 0, to: total == 0 ? 0 : CGFloat(done) / CGFloat(total))
+                    .stroke(theme.accent, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.4), value: done)
+                Text("\(done)/\(total)")
+                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(width: 40, height: 40)
+            .padding(3)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Today’s tasks")
+                    .font(.system(size: 15, weight: .semibold))
+                Text(nextLine)
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryLabel)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity)
+        .card(padding: EdgeInsets(top: 11, leading: 14, bottom: 11, trailing: 14))
+        .contentShape(Rectangle())
+        .onTapGesture { app.screen = .today }
+    }
+
+    private var nextLine: String {
+        if planner.remindersAccess == .denied { return "Reminders access is off" }
+        if planner.tasks.isEmpty { return "No tasks yet" }
+        if let next = planner.nextTask { return "Next: \(next.title)" }
+        return "All done"
     }
 }

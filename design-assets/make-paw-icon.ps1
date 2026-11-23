@@ -5,11 +5,13 @@ Add-Type -AssemblyName System.Drawing
 $s = $Size / 612.0
 function P([double]$x, [double]$y) { New-Object System.Drawing.PointF ([single]($x * $s)), ([single]($y * $s)) }
 
-$bmp = New-Object System.Drawing.Bitmap $Size, $Size, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+$transparent = ($Bg -eq "transparent")
+$fmt = if ($transparent) { [System.Drawing.Imaging.PixelFormat]::Format32bppArgb } else { [System.Drawing.Imaging.PixelFormat]::Format24bppRgb }
+$bmp = New-Object System.Drawing.Bitmap $Size, $Size, $fmt
 $g = [System.Drawing.Graphics]::FromImage($bmp)
 $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
 $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-$g.Clear([System.Drawing.ColorTranslator]::FromHtml($Bg))
+if ($transparent) { $g.Clear([System.Drawing.Color]::Transparent) } else { $g.Clear([System.Drawing.ColorTranslator]::FromHtml($Bg)) }
 $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.ColorTranslator]::FromHtml($Fg))
 
 # Main pad: rounded triangle with a soft wavy bottom (closed Bezier path)

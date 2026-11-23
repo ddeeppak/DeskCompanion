@@ -16,8 +16,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.deskcompanion.u7k3q2
         PRODUCT_NAME: DeskCompanion
-        MARKETING_VERSION: "0.1"
-        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "0.4"
+        CURRENT_PROJECT_VERSION: "4"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"
@@ -30,6 +30,11 @@ targets:
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         INFOPLIST_KEY_UIStatusBarHidden: YES
         INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        # Permission texts (step 2)
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Used to show the weather, sunrise and sunset where your desk is. Only an approximate location is sent to the free Open-Meteo weather service."
+        INFOPLIST_KEY_NSCalendarsUsageDescription: "Shows today's events on the Home and Today screens."
+        INFOPLIST_KEY_NSRemindersUsageDescription: "Shows, adds and ticks off your tasks from Reminders."
+        INFOPLIST_KEY_NSMotionUsageDescription: "Used to read the barometer for the air pressure trend on the Home screen."
         # Sideloadly signs the app later with your Apple ID
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
