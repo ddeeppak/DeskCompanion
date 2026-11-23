@@ -26,6 +26,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8765
@@ -33,10 +35,12 @@ SERVICE_TYPE = "_deskbridge._tcp"
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "bridge_config.local.json")       # git-ignored: holds the pairing code
 WORK_DIR = os.path.join(tempfile.gettempdir(), "desk-bridge-empty")   # Claude runs here: no project files
-VERSION = 4
+VERSION = 5
 MAX_TURNS = 40                 # refresh the session after this many questions
 IDLE_RESET_S = 30 * 60         # ...or after 30 minutes without questions
 ANSWER_TIMEOUT_S = 60
+WEB_TIMEOUT_S = 90
+MAX_REQUEST_BYTES = 4_000_000   # room for a photo
 MEMORY_PATH = os.path.join(HERE, "memory.local.json")              # git-ignored: facts the user asked to remember
 MAX_MEMORIES = 60
 
@@ -47,6 +51,8 @@ SYSTEM_PROMPT = (
     "Each user message may start with a Context line: the current date and time ('now', YYYY-MM-DDTHH:MM), weather, "
     "today's events and open tasks, 'memory' (facts the user asked you to remember), 'screen' (what the display "
     "shows now), 'settings' (current app settings), 'my commands' (the user's own commands), 'sounds' and 'habits'. "
+    "A message may include a photo from the desk iPhone's front camera (mirrored, sometimes blurry): answer about "
+    "what the user is showing, and read any text in it the right way round. "
     "Use them naturally; never invent events, tasks or facts, and don't list tasks or events unless asked. "
     "Interpret 'this', 'it' and bare numbers using the screen (on the Focus screen, 'make it 50' means focus_minutes 50).\n"
     "The user's words come from speech recognition and often contain misheard words (for example 'college' for "
@@ -60,7 +66,10 @@ SYSTEM_PROMPT = (
     'QUERY {"type": "tasks"}   (open tasks and tasks done today)\n'
     'QUERY {"type": "alarms"}\n'
     'QUERY {"type": "weather", "day": "tomorrow"}   ("today" or "tomorrow")\n'
-    'QUERY {"type": "focus"}   (focus time and sessions today)\n\n'
+    'QUERY {"type": "focus"}   (focus time and sessions today)\n'
+    'QUERY {"type": "web", "q": "India vs Australia score today"}   (live web search; takes about 20 seconds, so '
+    'use it only for news, sports, prices, opening hours, recent events and other facts that change or that you '
+    'do not know. Never for things you are sure about.)\n\n'
     "MY COMMANDS COME FIRST. Before anything else, compare the request with 'my commands' in the Context. If it "
     "means the same thing as one of them, even in completely different words ('I'm heading to bed' = a command "
     "called Good night, 'film time' = Movie time), reply only with its run_routine ACTION: no lookups, no questions.\n\n"
@@ -93,8 +102,10 @@ SYSTEM_PROMPT = (
     '"on_arrive": false}   ("time" HH:MM runs it daily, "days" 1=Sunday..7=Saturday, "on_arrive" runs it when the '
     'user sits down; the same name updates an existing command)\n'
     'ACTION {"type": "delete_routine", "name": "Movie time"}\n'
+    'ACTION {"type": "look", "question": "What is this?"}   (opens the front camera so you can see what the user '
+    'is showing you: use it when they ask you to look at, read, identify or translate something)\n'
     "Settings: style (calm|futuristic|warm), night_mode, night_start, night_end (HH:MM), night_brightness (1-40), "
-    "voice_replies, voice_speed (slow|normal|fast), keep_listening, command_routing (ai|phone), haptics, "
+    "voice_replies, voice_speed (slow|normal|fast), assistant_text (standard|large|extra large), keep_listening, command_routing (ai|phone), haptics, "
     "morning_briefing, evening_wrapup, event_headsup, headsup_minutes, presence_camera, away_minutes, wave, "
     "wave_action (talk|brighten), noise_meter, alarms, snooze_minutes, alarm_volume (5-100), focus_preset "
     "(short|long|custom), focus_minutes, break_minutes, focus_sound, focus_volume (0-100), share_day, learn_phrases.\n"
@@ -129,6 +140,10 @@ def load_config():
         cfg["config_version"] = 2
     cfg.setdefault("model", "haiku")
     cfg.setdefault("effort", "low")
+    # "claude" (Claude Code CLI) or "ollama" (a free model running on this PC, e.g. qwen2.5:7b)
+    cfg.setdefault("brain", "claude")
+    cfg.setdefault("ollama_model", "qwen2.5:7b")
+    cfg.setdefault("ollama_url", "http://127.0.0.1:11434")
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     return cfg
@@ -257,8 +272,17 @@ class ClaudeSession:
         return (self.proc is None or self.proc.poll() is not None or self.turns >= MAX_TURNS
                 or time.time() - self.last_used > IDLE_RESET_S)
 
-    def ask(self, text, on_delta):
-        """Sends one question; calls on_delta(text_piece) while streaming. Returns (answer, ms, first_ms)."""
+    def is_warm(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def ask(self, text, on_delta, image=None):
+        """Sends one question (optionally with a photo); calls on_delta(text_piece) while streaming.
+        Returns (answer, ms, first_ms)."""
+        content = text
+        if image:
+            content = [{"type": "image", "source": {"type": "base64", "media_type": image.get("type", "image/jpeg"),
+                                                     "data": image["data"]}},
+                       {"type": "text", "text": text}]
         with self.lock:
             for attempt in range(2):
                 if self._needs_restart() or attempt == 1:
@@ -268,7 +292,7 @@ class ClaudeSession:
                 pieces = []
                 try:
                     self.proc.stdin.write(json.dumps({"type": "user",
-                                                      "message": {"role": "user", "content": text}}) + "\n")
+                                                      "message": {"role": "user", "content": content}}) + "\n")
                     self.proc.stdin.flush()
                 except (OSError, ValueError):
                     continue                              # process died: restart and retry once
@@ -307,12 +331,116 @@ class ClaudeSession:
             raise RuntimeError("Could not start Claude Code")
 
 
-SESSION = ClaudeSession()
+class OllamaSession:
+    """Same interface as ClaudeSession, but the brain is a free local model served by Ollama on this PC."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.history = []
+        self.turns = 0
+        self.last_used = time.time()
+        self.model_used = CONFIG.get("ollama_model") or "qwen2.5:7b"
+        self.proc = None
+
+    def _needs_restart(self):
+        return self.turns >= MAX_TURNS or time.time() - self.last_used > IDLE_RESET_S
+
+    def is_warm(self):
+        return True
+
+    def start(self):
+        self.history = []
+        self.turns = 0
+
+    def stop(self):
+        pass
+
+    def reset(self):
+        with self.lock:
+            self.start()
+
+    def ask(self, text, on_delta, image=None):
+        with self.lock:
+            if self._needs_restart():
+                self.start()
+            message = {"role": "user", "content": text}
+            if image:
+                message["images"] = [image["data"]]          # needs a vision model, e.g. llava or qwen2.5vl
+            messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.history[-16:] + [message]
+            body = json.dumps({"model": self.model_used, "messages": messages, "stream": True,
+                               "options": {"temperature": 0.4}}).encode("utf-8")
+            url = (CONFIG.get("ollama_url") or "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
+            request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+            started = time.time()
+            first_ms = None
+            pieces = []
+            try:
+                with urllib.request.urlopen(request, timeout=ANSWER_TIMEOUT_S) as response:
+                    for raw in response:
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except ValueError:
+                            continue
+                        if ev.get("error"):
+                            raise RuntimeError(str(ev["error"])[:300])
+                        piece = (ev.get("message") or {}).get("content", "")
+                        if piece:
+                            if first_ms is None:
+                                first_ms = int((time.time() - started) * 1000)
+                            pieces.append(piece)
+                            on_delta(clean_for_speech(piece))
+                        if ev.get("done"):
+                            break
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(f"Ollama said {exc.code}: is the model '{self.model_used}' pulled?") from exc
+            except urllib.error.URLError as exc:
+                raise RuntimeError(f"Ollama isn't running at {url}") from exc
+            answer = clean_for_speech("".join(pieces)).strip()
+            self.history += [{"role": "user", "content": text}, {"role": "assistant", "content": answer}]
+            self.turns += 1
+            self.last_used = time.time()
+            return answer, int((time.time() - started) * 1000), first_ms
+
+
+USING_OLLAMA = CONFIG.get("brain", "claude") == "ollama"
+SESSION = OllamaSession() if USING_OLLAMA else ClaudeSession()
+
+WEB_PROMPT = (
+    "You answer questions for a voice assistant using live web results. Search the web, then answer in 1 to 3 short "
+    "spoken sentences: plain text, no markdown, lists or URLs. Mention the source in a few words. If the results "
+    "disagree or are unclear, say so briefly."
+)
+
+
+def web_search(query):
+    """Live web answer: a separate one-off Claude Code run with only the web tools. Returns (answer, ms)."""
+    if USING_OLLAMA or not CLAUDE:
+        raise RuntimeError("Web answers need the Claude brain on the PC")
+    cmd = [CLAUDE, "-p", query, "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
+           "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
+           "--system-prompt", WEB_PROMPT]
+    if CONFIG.get("model"):
+        cmd += ["--model", CONFIG["model"]]
+    started = time.time()
+    os.makedirs(WORK_DIR, exist_ok=True)
+    result = subprocess.run(cmd, cwd=WORK_DIR, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=WEB_TIMEOUT_S)
+    answer = clean_for_speech(result.stdout or "").strip()
+    if result.returncode != 0 or not answer:
+        raise RuntimeError((result.stderr or "The web search failed").strip()[:200])
+    return answer, int((time.time() - started) * 1000)
 
 
 def compose(question, context, history, fresh_session):
     lines = []
     context = dict(context or {})
+    if context.pop("test", None):
+        # Settings > Test the AI: keep it out of the real conversation.
+        return ("This is an automatic connection test from the app's settings, not a message from the user. "
+                "Reply with exactly: Hello, I'm ready. Then ignore this exchange in later answers.")
     if "memory" not in context:                     # the iPhone sends its own memory; the PC copy is the backup
         memory = load_memory()
         if memory:
@@ -352,7 +480,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", "0"))
-        return json.loads(self.rfile.read(min(length, 64_000)) or b"{}")
+        return json.loads(self.rfile.read(min(length, MAX_REQUEST_BYTES)) or b"{}")
 
     def do_GET(self):
         route = self.path.split("?")[0]
@@ -363,17 +491,17 @@ class Handler(BaseHTTPRequestHandler):
         if route != "/health":
             return self._send(404, {"error": "not found"})
         self._send(200, {
-            "ok": True, "version": VERSION, "name": CONFIG["name"], "brain": "Claude Code",
+            "ok": True, "version": VERSION, "name": CONFIG["name"], "brain": "Ollama" if USING_OLLAMA else "Claude Code",
             "model": SESSION.model_used, "effort": CONFIG.get("effort") or "default",
             "paired": self._authorized(), "claudeFound": bool(CLAUDE),
-            "warm": SESSION.proc is not None and SESSION.proc.poll() is None,
+            "warm": SESSION.is_warm(), "web": not USING_OLLAMA and bool(CLAUDE),
             "lastMs": STATS["last_ms"], "firstMs": STATS["first_ms"],
             "memories": len(load_memory()),
         })
 
     def do_POST(self):
         route = self.path.split("?")[0]
-        if route not in ("/ask", "/reset", "/memory"):
+        if route not in ("/ask", "/reset", "/memory", "/web"):
             return self._send(404, {"error": "not found"})
         if not self._authorized():
             return self._send(401, {"error": "Wrong pairing code"})
@@ -397,6 +525,25 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/reset":
             threading.Thread(target=SESSION.reset, daemon=True).start()
             return self._send(200, {"ok": True})
+        if route == "/web":
+            try:
+                req = self._read_json()
+            except ValueError:
+                return self._send(400, {"error": "Bad request"})
+            query = str(req.get("query", "")).strip()[:300]
+            if not query:
+                return self._send(400, {"error": "Empty query"})
+            stamp = time.strftime("%H:%M:%S")
+            print(f"[{stamp}] WEB: {query[:120]}")
+            try:
+                answer, ms = web_search(query)
+            except subprocess.TimeoutExpired:
+                return self._send(504, {"error": "The web search took too long"})
+            except Exception as exc:
+                print(f"[{stamp}]   web error: {exc}")
+                return self._send(502, {"error": str(exc)})
+            print(f"[{stamp}]   WEB ({ms} ms): {answer[:120]}")
+            return self._send(200, {"answer": answer, "ms": ms})
         try:
             req = self._read_json()
         except ValueError:
@@ -404,14 +551,17 @@ class Handler(BaseHTTPRequestHandler):
         question = str(req.get("question", "")).strip()[:1000]
         if not question:
             return self._send(400, {"error": "Empty question"})
-        if not CLAUDE:
+        if not CLAUDE and not USING_OLLAMA:
             return self._send(502, {"error": "The 'claude' command was not found on this PC"})
+        image = None
+        if isinstance(req.get("image"), str) and req["image"]:
+            image = {"data": req["image"], "type": str(req.get("imageType") or "image/jpeg")}
         context = req.get("context") if isinstance(req.get("context"), dict) else {}
         history = req.get("history") if isinstance(req.get("history"), list) else []
         stream = bool(req.get("stream"))
         text = compose(question, context, history, fresh_session=SESSION._needs_restart())
         stamp = time.strftime("%H:%M:%S")
-        print(f"[{stamp}] Q: {question[:120]}")
+        print(f"[{stamp}] Q: {question[:120]}{'  (with a photo)' if image else ''}")
 
         if stream:
             # Newline-delimited JSON: {"delta": "..."} pieces, then {"done": true, ...} or {"error": "..."}
@@ -427,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             try:
-                answer, ms, first = SESSION.ask(text, lambda piece: emit({"delta": piece}))
+                answer, ms, first = SESSION.ask(text, lambda piece: emit({"delta": piece}), image=image)
             except Exception as exc:
                 print(f"[{stamp}]   error: {exc}")
                 return emit({"error": str(exc)})
@@ -435,7 +585,7 @@ class Handler(BaseHTTPRequestHandler):
             emit({"done": True, "answer": answer, "ms": ms, "firstMs": first, "model": SESSION.model_used})
         else:
             try:
-                answer, ms, first = SESSION.ask(text, lambda piece: None)
+                answer, ms, first = SESSION.ask(text, lambda piece: None, image=image)
             except TimeoutError as exc:
                 return self._send(504, {"error": str(exc)})
             except Exception as exc:
@@ -478,8 +628,11 @@ def main():
     print(f"  Name:          {CONFIG['name']}")
     print(f"  Address:       {', '.join(f'{ip}:{PORT}' for ip in local_ips()) or 'unknown'}")
     print(f"  Pairing code:  {CONFIG['pairing_code']}   (enter in the app: Settings > AI & Network)")
-    print(f"  Brain:         Claude Code, model {CONFIG.get('model') or 'default'}, effort {CONFIG.get('effort') or 'default'}"
-          + ("" if CLAUDE else "   !! 'claude' command not found"))
+    if USING_OLLAMA:
+        print(f"  Brain:         Ollama, model {SESSION.model_used} at {CONFIG.get('ollama_url')}  (web answers off)")
+    else:
+        print(f"  Brain:         Claude Code, model {CONFIG.get('model') or 'default'}, effort {CONFIG.get('effort') or 'default'}"
+              + ("" if CLAUDE else "   !! 'claude' command not found"))
     print("  Stop with Ctrl+C. If Windows asks, allow Python on PRIVATE networks.")
     print("=" * 62)
     try:

@@ -17,6 +17,7 @@ struct AssistantView: View {
             case .answered: AnswerView()
             case .misheard: MisheardView()
             case .noPermission: NoPermissionView()
+            case .looking: LookView()
             }
         }
         .screenPadding()
@@ -349,6 +350,7 @@ private struct MisheardView: View {
 // MARK: - 05 Answer
 
 private struct AnswerView: View {
+    @AppStorage("assistant.textScale") private var textScale = 1.0
     @EnvironmentObject private var assistant: AssistantService
     @EnvironmentObject private var voice: VoiceService
     @EnvironmentObject private var ai: AIService
@@ -399,7 +401,7 @@ private struct AnswerView: View {
             HStack {
                 Spacer(minLength: 60)
                 Text(message.text)
-                    .font(.system(size: 16))
+                    .font(.system(size: 16 * CGFloat(textScale)))
                     .foregroundColor(theme.onAccent)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
@@ -419,7 +421,7 @@ private struct AnswerView: View {
                     .padding(.leading, 6)
                     VStack(alignment: .leading, spacing: 7) {
                         Text(message.text)
-                            .font(.system(size: faded ? 16 : 17))
+                            .font(.system(size: (faded ? 16 : 17) * CGFloat(textScale)))
                             .fixedSize(horizontal: false, vertical: true)
                         if isLast && voice.speaking {
                             HStack(spacing: 7) {
@@ -482,6 +484,122 @@ private struct AnswerView: View {
             return "Still works offline: timers, reminders, lists, calendar and weather."
         default:
             return "Handled on this iPhone in \(seconds) s. General questions go to the AI on your PC."
+        }
+    }
+}
+
+/// Camera question: live front-camera preview, a 3-second countdown, then the photo goes to the AI.
+private struct LookView: View {
+    @EnvironmentObject private var assistant: AssistantService
+    @EnvironmentObject private var presence: PresenceService
+    @Environment(\.theme) private var theme
+    @StateObject private var camera = PhotoCapture()
+    @State private var countdown = 3
+    @State private var taking = false
+    @State private var ticker: Timer? = nil
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ZStack {
+                Color.black
+                if camera.denied {
+                    Text("Camera access is off. Allow it in Settings → Privacy.")
+                        .font(.system(size: 15))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(20)
+                } else {
+                    CameraPreview(session: camera.session)
+                }
+                if taking {
+                    ProgressView().scaleEffect(1.6).tint(.white)
+                } else if camera.ready && countdown > 0 {
+                    Text("\(countdown)")
+                        .font(.system(size: 96, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.6), radius: 10)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "camera.fill").foregroundColor(theme.accent)
+                    Text("Hold it up to the screen").font(.system(size: 20, weight: .bold))
+                }
+                Text("“\(assistant.lookQuestion)”")
+                    .font(.system(size: 15))
+                    .foregroundColor(theme.secondaryLabel)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("The photo goes only to the AI on your PC and is never saved.")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryLabel)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button(action: shoot) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "camera.circle.fill")
+                        Text("Take it now").font(.system(size: 17, weight: .bold))
+                    }
+                    .foregroundColor(theme.onAccent)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(RoundedRectangle(cornerRadius: theme.controlRadius, style: .continuous).fill(theme.accent))
+                }
+                .buttonStyle(.plain)
+                .disabled(!camera.ready || taking)
+                Button { assistant.cancelLook() } label: {
+                    Text("Cancel")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(theme.label)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(RoundedRectangle(cornerRadius: theme.controlRadius, style: .continuous).fill(theme.fill))
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(width: 236)
+        }
+        .onAppear {
+            presence.suspend()                   // the presence check also uses the front camera
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { camera.start() }
+        }
+        .onChange(of: camera.ready) { ready in
+            if ready { startCountdown() }
+        }
+        .onDisappear {
+            ticker?.invalidate()
+            camera.stop()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { presence.start() }
+        }
+    }
+
+    private func startCountdown() {
+        countdown = 3
+        ticker?.invalidate()
+        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { timer in
+            if countdown > 1 {
+                countdown -= 1
+            } else {
+                timer.invalidate()
+                countdown = 0
+                shoot()
+            }
+        }
+    }
+
+    private func shoot() {
+        guard !taking, camera.ready else { return }
+        ticker?.invalidate()
+        taking = true
+        Haptics.tap()
+        camera.capture { data in
+            if let data = data {
+                assistant.askAboutPhoto(data)
+            } else {
+                assistant.cancelLook(message: "Sorry, I couldn't take the photo.")
+            }
         }
     }
 }

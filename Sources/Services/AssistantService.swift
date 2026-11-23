@@ -31,7 +31,7 @@ private final class AskProgress {
 
 /// The voice assistant: listen → understand (your commands, the AI, or the phone's rules) → act → reply.
 final class AssistantService: ObservableObject {
-    enum Phase: Equatable { case idle, listening, thinking, answered, misheard, noPermission }
+    enum Phase: Equatable { case idle, listening, thinking, answered, misheard, noPermission, looking }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var messages: [ChatMessage] = []
@@ -43,6 +43,9 @@ final class AssistantService: ObservableObject {
     @Published private(set) var thinkingQuestion = ""
     /// What the AI is doing right now ("Checking your calendar…"), shown under "Thinking…".
     @Published private(set) var thinkingStatus = ""
+    /// Camera question waiting for its photo ("What's this?").
+    @Published private(set) var lookQuestion = ""
+    private var lookShowsQuestion = true
     private var lastQuestion = ""
     /// After "For what time?", the next thing you say completes this ("set an alarm for" + "4:30").
     private var pendingPrefix: String?
@@ -165,7 +168,8 @@ final class AssistantService: ObservableObject {
     private func listeningHints() -> [String] {
         var words = ["remind me", "reminder", "alarm", "timer", "calendar", "focus", "pomodoro", "tasks", "to-do list",
                      "tick off", "weather", "tomorrow", "holiday", "holidays", "remember that", "forget",
-                     "warm style", "calm style", "futuristic style", "cancel the timer", "what's on"]
+                     "warm style", "calm style", "futuristic style", "cancel the timer", "what's on",
+                     "what's this", "read this", "translate this", "what am I holding"]
         words += (planner?.tasks ?? []).filter { !$0.isCompleted }.map { $0.title }
         words += (planner?.events ?? []).map { $0.title }
         words += (commands?.routines ?? []).filter { $0.enabled }.flatMap { $0.phrases }
@@ -281,6 +285,10 @@ final class AssistantService: ObservableObject {
             return
         }
         let intent = CommandParser.parse(text)
+        if case .lookAt(let question) = intent {
+            startLook(question, showQuestion: true)
+            return
+        }
         // 2. AI first: it understands any phrasing and can do several things at once. Clear-cut commands
         //    (timers, alarms, stop, the time) stay instant; if the AI is slow, the phone takes over.
         if routing == "ai", let ai = ai, ai.isConfigured, ai.state != .offline, ai.state != .wrongCode,
@@ -359,7 +367,7 @@ final class AssistantService: ObservableObject {
         let words = lower.split(separator: " ").count
         switch intent {
         case .timer, .alarm: return !looksLikeQuestion(text)
-        case .cancelTimer, .stopFocus: return true
+        case .cancelTimer, .stopFocus, .lookAt: return true
         case .time, .date: return words <= 5
         case .deleteAlarm(let hour, _, _, _): return hour != nil
         default: return false
@@ -390,6 +398,12 @@ final class AssistantService: ObservableObject {
                 self?.execute(lines, source: source, ms: ms, learnFrom: nil, heading: heading,
                               conversational: conversational, confirmed: true)
             }
+            return
+        }
+        // The AI wants to see something: open the camera instead.
+        if let look = lines.compactMap({ CommandStore.json($0) }).first(where: { CommandStore.type($0) == "look" }) {
+            let question = CommandStore.value(look["question"])
+            startLook(question.isEmpty ? "What is this?" : question, showQuestion: false)
             return
         }
         var replies: [(text: String, card: ActionCard?)] = []
@@ -581,15 +595,18 @@ final class AssistantService: ObservableObject {
     // MARK: Local AI (Desk Bridge on the PC)
 
     /// Round 0 is your question. Later rounds send lookup RESULTS back to the AI (up to 3 rounds).
-    private func askAI(_ question: String, round: Int = 0, fallback: VoiceIntent? = nil, learn: Bool = false) {
+    private func askAI(_ question: String, round: Int = 0, fallback: VoiceIntent? = nil, learn: Bool = false,
+                       image: Data? = nil, showQuestion: Bool = true) {
         guard let ai = ai, let voice = voice else { return }
         let progress = AskProgress()
         let history = round == 0 ? messages : []
         if round == 0 {
             lastQuestion = question
             thinkingQuestion = question
-            thinkingStatus = ""
-            append(ChatMessage(fromUser: true, text: question, source: nil, date: Date()))
+            thinkingStatus = image == nil ? "" : "Looking at your photo…"
+            if showQuestion {
+                append(ChatMessage(fromUser: true, text: image == nil ? question : "\(question) (photo)", source: nil, date: Date()))
+            }
         }
         phase = .thinking
         undone = false
@@ -631,7 +648,8 @@ final class AssistantService: ObservableObject {
         }
         askTask = Task { [weak self] in
             do {
-                let result = try await ai.ask(question, context: self?.aiContext() ?? [:], history: history) { incoming in
+                let result = try await ai.ask(question, context: self?.aiContext() ?? [:], history: history,
+                                              image: round == 0 ? image : nil) { incoming in
                     progress.received = true
                     fullText += incoming
                     guard !isAction else { return }
@@ -661,7 +679,12 @@ final class AssistantService: ObservableObject {
                             return
                         }
                         let results = self.runQueries(result.answer)
-                        self.askAI(results, round: round + 1)
+                        let web = Self.webQueries(result.answer)
+                        if web.isEmpty {
+                            self.askAI(results, round: round + 1)
+                        } else {
+                            self.searchWeb(web, results: results, round: round + 1)
+                        }
                         return
                     }
                     if isAction || result.answer.contains("ACTION") {
@@ -841,6 +864,8 @@ final class AssistantService: ObservableObject {
                     let rain = w.nextHours(after: now, count: 12).contains { WeatherSnapshot.isRainy($0.code) }
                     out.append("weather today: \(Int(w.temperature.rounded())) degrees, \(WeatherCode.text(w.code)), high \(Int(w.high.rounded())), low \(Int(w.low.rounded())), rain in next 12 h: \(rain ? "likely" : "no")")
                 }
+            case "web":
+                statuses.insert("Searching the web…", at: 0)        // answered by searchWeb()
             case "focus":
                 statuses.append("Checking your focus time…")
                 if let focus = focus {
@@ -853,6 +878,71 @@ final class AssistantService: ObservableObject {
         }
         thinkingStatus = statuses.first ?? "Thinking it through…"
         return "RESULTS\n" + out.joined(separator: "\n") + "\nNow do what I originally asked: answer briefly, or reply with ACTION lines."
+    }
+
+    /// `QUERY {"type": "web", "q": "…"}` lines.
+    private static func webQueries(_ raw: String) -> [String] {
+        raw.components(separatedBy: .newlines)
+            .filter { $0.contains("QUERY") }
+            .compactMap { CommandStore.json($0) }
+            .filter { CommandStore.type($0) == "web" }
+            .map { CommandStore.value($0["q"] ?? $0["query"]) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Live web answers: a separate search on the PC (about 20 s), then the AI answers with the results.
+    private func searchWeb(_ queries: [String], results: String, round: Int) {
+        guard let ai = ai else { return }
+        thinkingStatus = "Searching the web…"
+        phase = .thinking
+        askTask = Task { [weak self] in
+            var found: [String] = []
+            for query in queries.prefix(2) {
+                do {
+                    let answer = try await ai.web(query)
+                    found.append("web results for \(query): \(answer)")
+                } catch {
+                    found.append("web search for \(query): failed, tell the user the web search didn't work")
+                }
+            }
+            await MainActor.run {
+                guard let self = self, self.phase == .thinking else { return }
+                let combined = results.replacingOccurrences(of: "RESULTS\n",
+                                                            with: "RESULTS\n" + found.joined(separator: "\n") + "\n")
+                self.askAI(combined, round: round)
+            }
+        }
+    }
+
+    // MARK: Camera questions
+
+    /// Opens the front camera with a short countdown (AssistantView), then asks the AI about the photo.
+    func startLook(_ question: String, showQuestion: Bool) {
+        guard let ai = ai, ai.isConfigured else {
+            answerOffline(question, reason: "Camera questions need the AI on your PC. Timers, reminders and lists still work.")
+            return
+        }
+        lookQuestion = question
+        lookShowsQuestion = showQuestion
+        followUpArmed = false
+        card = nil
+        app?.screen = .assistant
+        phase = .looking
+        voice?.speak("Hold it up to the screen.")
+    }
+
+    func askAboutPhoto(_ photo: Data) {
+        guard phase == .looking else { return }
+        askAI(lookQuestion, image: photo, showQuestion: lookShowsQuestion)
+    }
+
+    func cancelLook(message: String? = nil) {
+        guard phase == .looking else { return }
+        phase = messages.isEmpty ? .idle : .answered
+        if let message = message {
+            append(ChatMessage(fromUser: false, text: message, source: "offline", date: Date()))
+            voice?.speak(message)
+        }
     }
 
     /// `ACTION {"type": "alarm", "time": "16:30"}` → the matching VoiceIntent.
@@ -1066,6 +1156,9 @@ final class AssistantService: ObservableObject {
 
         case .tasks:
             return tasksReply()
+
+        case .lookAt:
+            return ("Camera questions need the AI on your PC.", nil)
 
         case .completeTask(let name):
             guard let planner = planner, planner.remindersAccess == .granted else {

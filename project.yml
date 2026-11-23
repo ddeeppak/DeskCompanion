@@ -18,8 +18,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.deskcompanion.u7k3q2
         PRODUCT_NAME: DeskCompanion
-        MARKETING_VERSION: "0.9"
-        CURRENT_PROJECT_VERSION: "15"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "16"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "15.0"

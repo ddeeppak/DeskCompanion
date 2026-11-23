@@ -148,6 +148,13 @@ final class AppControl: ObservableObject {
             list.append(choice("command_routing", "Command understanding", ["ai": "ai", "phone": "phone", "local": "phone"],
                                get: { assistant.routing }, set: { assistant.routing = $0 }))
         }
+        list.append(choice("assistant_text", "Conversation text", ["standard": "1.0", "normal": "1.0", "large": "1.2",
+                                                                   "extra large": "1.4", "extra_large": "1.4", "larger": "1.4"],
+                           get: {
+                               let scale = UserDefaults.standard.object(forKey: "assistant.textScale") as? Double ?? 1.0
+                               return scale >= 1.35 ? "extra large" : (scale >= 1.15 ? "large" : "standard")
+                           },
+                           set: { UserDefaults.standard.set(Double($0) ?? 1.0, forKey: "assistant.textScale") }))
         list.append(toggle("haptics", "Haptics",
                            get: { UserDefaults.standard.object(forKey: Haptics.enabledKey) as? Bool ?? true },
                            set: { UserDefaults.standard.set($0, forKey: Haptics.enabledKey) }))

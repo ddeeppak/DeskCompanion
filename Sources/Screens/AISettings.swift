@@ -220,7 +220,7 @@ struct AISettings: View {
         testResult = ""
         Task {
             do {
-                let result = try await ai.ask("Say hello in five words.", context: [:], history: []) { _ in }
+                let result = try await ai.ask("Connection test", context: ["test": "1"], history: []) { _ in }
                 await MainActor.run {
                     testResult = "\(result.answer) (\(String(format: "%.1f", Double(result.ms) / 1000)) s)"
                     voice.speak(result.answer, force: true)

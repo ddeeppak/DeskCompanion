@@ -84,6 +84,19 @@ struct Theme {
         }
     }
 
+    /// Settings → Accessibility → Display & Text Size → Increase Contrast: brighter secondary text,
+    /// stronger separators and card edges.
+    func highContrast() -> Theme {
+        Theme(style: style, background: background, bar: bar, surface: surface, fill: fill,
+              separator: Color.white.opacity(0.45), label: label,
+              secondaryLabel: Color.white.opacity(0.85), tertiaryLabel: Color.white.opacity(0.6),
+              accent: accent, onAccent: onAccent, accentTint: accentTint, accent2: accent2, green: green,
+              orange: orange, red: red, night: night, cardRadius: cardRadius, listRadius: listRadius,
+              controlRadius: controlRadius, cardBorder: Color.white.opacity(0.35), glow: glow,
+              segmentSelected: segmentSelected, toggleOn: toggleOn, yellow: yellow, indigo: indigo,
+              material: material, clockSize: clockSize, clockTracking: clockTracking)
+    }
+
     static func make(_ style: AppStyle) -> Theme {
         switch style {
         case .calm:

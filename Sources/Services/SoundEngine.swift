@@ -47,10 +47,13 @@ final class SoundEngine: ObservableObject {
         }
     }
 
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let generator = NoiseGenerator()
-    private let bellPlayer = AVAudioPlayerNode()     // chime + alarms
-    private let filePlayer = AVAudioPlayerNode()     // "My sounds"
+    private var bellPlayer = AVAudioPlayerNode()     // chime + alarms
+    private var filePlayer = AVAudioPlayerNode()     // "My sounds"
+    /// What should be playing, so it can be restarted after Siri, a call or an iOS audio reset.
+    private var focusID = "off"
+    private var alarmSettings: (tone: AlarmTone, volume: Float)? = nil
     private var monoFormat: AVAudioFormat?
     private var buffers: [AlarmTone: AVAudioPCMBuffer] = [:]
     private var configured = false
@@ -60,12 +63,63 @@ final class SoundEngine: ObservableObject {
     private var currentFile: AVAudioFile?
     private var currentFileName: String?
 
-    private init() {}
+    private init() {
+        let center = NotificationCenter.default
+        // Siri, a phone call or another app took the audio: start again when it gives it back.
+        center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.recover(rebuildFirst: false) }
+        }
+        // iOS restarted its audio system (rare, but it happens over days): build a fresh engine.
+        center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.recover(rebuildFirst: true)
+        }
+        // The output changed (speaker, Bluetooth, sample rate): the engine stops itself.
+        center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] note in
+            guard let self = self, (note.object as AnyObject?) === self.engine else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.recover(rebuildFirst: false) }
+        }
+    }
+
+    /// Starts again whatever should be playing (an alarm, a chime, the focus sound).
+    private func recover(rebuildFirst: Bool) {
+        if rebuildFirst { rebuild() }
+        let alarm = alarmPlaying ? alarmSettings : nil
+        let chime = chimePlaying
+        let focus = focusID
+        guard alarm != nil || chime || focus != "off" else { return }
+        StabilityMonitor.shared.noteAudioRecovery()
+        if let alarm = alarm {
+            alarmPlaying = false
+            startAlarm(tone: alarm.tone, volume: alarm.volume, rising: false)
+        } else if chime {
+            chimePlaying = false
+            startChime()
+        }
+        if focus != "off" {
+            currentFileName = nil            // make a sound file start again
+            setFocusSound(focus)
+        }
+    }
+
+    private func rebuild() {
+        engine.stop()
+        engine = AVAudioEngine()
+        bellPlayer = AVAudioPlayerNode()
+        filePlayer = AVAudioPlayerNode()
+        filePlayer.volume = focusVolume
+        buffers = [:]
+        currentFile = nil
+        currentFileName = nil
+        configured = false
+    }
 
     // MARK: Focus sounds
 
     /// id: "off", "rain", "noise", "cafe" or "file:<file name>"
     func setFocusSound(_ id: String) {
+        focusID = id
         if id == "off" {
             generator.fadeOut()
             stopFile()
@@ -151,6 +205,7 @@ final class SoundEngine: ObservableObject {
 
     /// Loops the alarm tone. With `rising`, starts quiet and gets louder over 30 seconds.
     func startAlarm(tone: AlarmTone, volume: Float, rising: Bool) {
+        alarmSettings = (tone: tone, volume: volume)
         guard ensureRunning(), let buffer = buffer(for: tone) else { return }
         chimeStop?.cancel()
         chimePlaying = false
@@ -173,6 +228,7 @@ final class SoundEngine: ObservableObject {
     }
 
     func stopAlarm() {
+        alarmSettings = nil
         rampTimer?.invalidate()
         guard alarmPlaying else { return }
         bellPlayer.stop()
@@ -196,10 +252,14 @@ final class SoundEngine: ObservableObject {
     private func ensureRunning() -> Bool {
         configure()
         idleStop?.cancel()
-        if !engine.isRunning {
-            do { try engine.start() } catch { return false }
-        }
-        return true
+        if engine.isRunning { return true }
+        AudioSessionSetup.ensure()               // after an interruption the session must be active again
+        if (try? engine.start()) != nil { return true }
+        // The engine is broken (audio reset): build a fresh one and try once more, so alarms still ring.
+        rebuild()
+        configure()
+        AudioSessionSetup.ensure()
+        return (try? engine.start()) != nil
     }
 
     private func pauseWhenIdle(after seconds: Double = 1.5) {

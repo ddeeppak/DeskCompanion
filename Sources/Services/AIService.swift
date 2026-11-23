@@ -181,17 +181,20 @@ final class AIService: ObservableObject {
     // MARK: Asking (streamed)
 
     /// Streams the answer: `onDelta` gets each new piece of text (on the main thread).
-    func ask(_ question: String, context: [String: String], history: [ChatMessage],
+    func ask(_ question: String, context: [String: String], history: [ChatMessage], image: Data? = nil,
              onDelta: @escaping (String) -> Void) async throws -> (answer: String, ms: Int) {
         guard isConfigured, let url = url("/ask") else { throw AIError.notSetUp }
-        var request = URLRequest(url: url, timeoutInterval: 45)
+        var request = URLRequest(url: url, timeoutInterval: image == nil ? 45 : 60)
         request.httpMethod = "POST"
         request.setValue(code, forHTTPHeaderField: "X-Desk-Code")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let turns = history.suffix(6).map { ["fromUser": $0.fromUser, "text": $0.text] as [String: Any] }
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "question": question, "context": context, "history": turns, "stream": true
-        ])
+        var body: [String: Any] = ["question": question, "context": context, "history": turns, "stream": true]
+        if let image = image {
+            body["image"] = image.base64EncodedString()
+            body["imageType"] = "image/jpeg"
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let started = Date()
         let bytes: URLSession.AsyncBytes
@@ -233,6 +236,23 @@ final class AIService: ObservableObject {
             self.setState(.online)
         }
         return (answer.trimmingCharacters(in: .whitespacesAndNewlines), ms)
+    }
+
+    // MARK: Live web answers (a separate search on the PC, about 20 s)
+
+    func web(_ query: String) async throws -> String {
+        guard isConfigured, let url = url("/web") else { throw AIError.notSetUp }
+        var request = URLRequest(url: url, timeoutInterval: 95)
+        request.httpMethod = "POST"
+        request.setValue(code, forHTTPHeaderField: "X-Desk-Code")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": query])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw AIError.server((json?["error"] as? String) ?? "The web search failed")
+        }
+        return (json?["answer"] as? String) ?? ""
     }
 
     // MARK: Long-term memory (stored on the PC)

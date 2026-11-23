@@ -128,6 +128,7 @@ struct SettingsView: View {
         case .sensors: SensorsSettings()
         case .today: TodaySettings()
         case .about: AboutSettings()
+        case .privacy: PrivacySettings()
         default: PlannedSettings(section: section)
         }
     }
@@ -139,6 +140,7 @@ private struct DisplaySettings: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var night: NightMode
     @AppStorage(Haptics.enabledKey) private var hapticsOn = true
+    @AppStorage("assistant.textScale") private var assistantTextScale = 1.0
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -217,7 +219,26 @@ private struct DisplaySettings: View {
             .buttonStyle(.plain)
             .padding(.top, 4)
 
-            footnote("Tap the night clock to brighten it for 30 seconds. Wave to brighten arrives in step 7.")
+            footnote("Tap the night clock, or wave over the top of the phone, to brighten it for 30 seconds.")
+
+            SectionLabel("Assistant text")
+                .padding(.top, 10)
+            VStack(spacing: 0) {
+                SettingsRow {
+                    Text("Conversation size")
+                    Spacer(minLength: 8)
+                    Picker("", selection: $assistantTextScale) {
+                        Text("Standard").tag(1.0)
+                        Text("Large").tag(1.2)
+                        Text("Extra large").tag(1.4)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 280)
+                }
+                .padding(.vertical, 3)
+            }
+            .groupedBox()
+            footnote("Easier to read from across the desk. Only the conversation grows, so screens never get cut off.")
 
             SectionLabel("Feedback")
                 .padding(.top, 10)
@@ -323,16 +344,44 @@ private struct StyleTile: View {
 // MARK: - About
 
 private struct AboutSettings: View {
+    @EnvironmentObject private var stability: StabilityMonitor
+    @Environment(\.theme) private var theme
+
     var body: some View {
         let screen = UIScreen.main.bounds.size
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel("Desk Companion")
             InfoList(rows: [
                 InfoRow(title: "Version", value: appVersion),
-                InfoRow(title: "Build step", value: "0.9 · Full voice control + my commands"),
+                InfoRow(title: "Build step", value: "1.0 · Polish, stability, web + camera"),
                 InfoRow(title: "iOS", value: UIDevice.current.systemVersion),
                 InfoRow(title: "Screen", value: "\(Int(max(screen.width, screen.height))) × \(Int(min(screen.width, screen.height))) pt")
             ])
+            SectionLabel("Stability (48-hour test)")
+                .padding(.top, 10)
+            TimelineView(.everyMinute) { _ in
+                InfoList(rows: [
+                    InfoRow(title: "Running for", value: StabilityMonitor.duration(stability.uptime)),
+                    InfoRow(title: "Longest run", value: StabilityMonitor.duration(stability.longestRunHours * 3600)),
+                    InfoRow(title: "Unexpected restarts", value: "\(stability.unexpectedRestarts)"),
+                    InfoRow(title: "Memory now / peak", value: "\(Int(stability.memoryMB)) MB / \(Int(stability.peakMemoryMB)) MB"),
+                    InfoRow(title: "Temperature", value: "\(stability.thermalText) · hot \(stability.hotEvents)×"),
+                    InfoRow(title: "Battery", value: stability.batteryText),
+                    InfoRow(title: "Sound recoveries", value: "\(stability.audioRecoveries)"),
+                    InfoRow(title: "PC AI reachable", value: stability.aiAvailability)
+                ])
+            }
+            HStack {
+                Text("Since \(DateText.short(stability.trackingSince)). A good result after 2 days: no unexpected restarts, memory peak under 300 MB, temperature mostly Normal.")
+                    .font(.system(size: 13))
+                    .foregroundColor(theme.secondaryLabel)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("Reset") { stability.resetCounters() }
+                    .foregroundColor(theme.accent)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .padding(.leading, 14)
         }
     }
 

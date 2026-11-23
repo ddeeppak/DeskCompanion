@@ -17,6 +17,8 @@ struct RootView: View {
     @EnvironmentObject private var noise: NoiseMeter
     @EnvironmentObject private var briefing: BriefingService
     @EnvironmentObject private var commands: CommandStore
+    @EnvironmentObject private var stability: StabilityMonitor
+    @Environment(\.colorSchemeContrast) private var contrast
     @EnvironmentObject private var assistant: AssistantService
     // Note: RootView deliberately does not observe FocusTimer (it ticks twice a second).
     @Environment(\.scenePhase) private var scenePhase
@@ -30,7 +32,7 @@ struct RootView: View {
     private let alarmTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let theme = Theme.make(app.style)
+        let theme = contrast == .increased ? Theme.make(app.style).highContrast() : Theme.make(app.style)
 
         ZStack {
             // The rail and the screen are pinned to the exact screen height. If a screen's content is ever
@@ -90,6 +92,7 @@ struct RootView: View {
             briefing.check()
             // Your commands that run at a time of day.
             for routine in commands.dueRoutines() { assistant.runTriggered(routine) }
+            stability.tick(aiConfigured: app.aiStatus != .notSetUp, aiOnline: app.aiStatus == .online)
         }
         .onReceive(alertTimer) { _ in
             planner.checkAlerts()
@@ -126,6 +129,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { phase in
             switch phase {
             case .active:
+                stability.markActive()
                 UIApplication.shared.isIdleTimerDisabled = true
                 library.rescan()          // pick up files copied with iTunes File Sharing
                 alarms.check()
@@ -140,6 +144,7 @@ struct RootView: View {
                 proximity.apply()
                 noise.start()
             case .background:
+                stability.markBackground()
                 night.restoreBrightness()
                 pressure.stop()
                 presence.suspend()

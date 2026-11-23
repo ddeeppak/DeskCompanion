@@ -31,7 +31,11 @@ final class SpeechService: ObservableObject {
         ("en-US", "English (US)"), ("en-IN", "English (India)"), ("en-GB", "English (UK)"), ("en-AU", "English (Australia)")
     ]
 
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine = AVAudioEngine()
+    /// Privacy option: never send audio to Apple's servers (less accurate on an iPhone 7).
+    @Published var onDeviceOnly: Bool {
+        didSet { UserDefaults.standard.set(onDeviceOnly, forKey: "speech.onDeviceOnly") }
+    }
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var silenceTimer: Timer?
@@ -52,7 +56,22 @@ final class SpeechService: ObservableObject {
     init() {
         let saved = UserDefaults.standard.string(forKey: "speech.locale")
         localeID = saved ?? (Locale.current.identifier.hasPrefix("en_IN") ? "en-IN" : "en-US")
+        onDeviceOnly = UserDefaults.standard.bool(forKey: "speech.onDeviceOnly")
         permission = Self.currentPermission()
+        let center = NotificationCenter.default
+        // A call or Siri takes the microphone: finish with what was heard so far.
+        center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began,
+                  let self = self, self.isListening else { return }
+            self.stop()
+        }
+        // iOS reset its audio system: the old engine no longer works.
+        center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self else { return }
+            if self.isListening { self.cancel() }
+            self.audioEngine = AVAudioEngine()
+        }
     }
 
     /// True when this iPhone can recognise speech without internet for the chosen language.
@@ -109,7 +128,7 @@ final class SpeechService: ObservableObject {
         let newRequest = SFSpeechAudioBufferRecognitionRequest()
         newRequest.shouldReportPartialResults = true
         let online = Self.network.currentPath.status == .satisfied
-        newRequest.requiresOnDeviceRecognition = !online && recognizer.supportsOnDeviceRecognition
+        newRequest.requiresOnDeviceRecognition = (onDeviceOnly || !online) && recognizer.supportsOnDeviceRecognition
         newRequest.contextualStrings = Array(hints.prefix(100))
         request = newRequest
 

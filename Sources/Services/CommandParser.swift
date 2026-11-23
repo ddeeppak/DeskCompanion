@@ -23,6 +23,8 @@ enum VoiceIntent: Equatable {
     case deleteAlarm(hour: Int?, minute: Int?, meridiem: String?, all: Bool)
     /// "switch to warm style" (calm, futuristic or warm)
     case setStyle(String)
+    /// "What's this?", "Read this", "Translate this": take a photo and ask the AI
+    case lookAt(String)
     /// Alarm or timer asked without a time ("set an alarm"): ask for it, then listen.
     case needsTime(kind: String)
     case unknown
@@ -39,6 +41,7 @@ enum CommandParser {
         if contains(t, ["cancel the timer", "cancel timer", "stop the timer", "stop timer", "delete the timer"]) {
             return .cancelTimer
         }
+        if isLookRequest(t) { return .lookAt(capitalizeFirst(raw.trimmingCharacters(in: .whitespacesAndNewlines))) }
         if let edit = editCommand(t) { return edit }
         if t.contains("timer") || t.hasPrefix("count down") {
             let seconds = durationSeconds(t)
@@ -349,6 +352,15 @@ enum CommandParser {
             return nil
         }
         return complete ? .completeTask(name) : .deleteTask(name)
+    }
+
+    /// "what's this", "what am I holding", "read this label", "translate this" (not "what's this week").
+    static func isLookRequest(_ t: String) -> Bool {
+        let pattern = #"^(?:hey |ok |okay |so |and )?(?:can you |could you |please )?(?:what(?:'s| is) (?:this|that)|what am i holding|what i'm holding|look at (?:this|that)|take a look|read (?:this|that|it)|translate (?:this|that)|what does (?:this|that|it) say|can you see (?:this|that|what)|what do you see|describe (?:this|that|what you see)|identify (?:this|that)|tell me what (?:this|that) is)\b"#
+        guard firstMatch(pattern, in: t) != nil else { return false }
+        let notAboutAThing = ["week", "weekend", "month", "year", "morning", "afternoon", "evening", "tonight",
+                              "song", "word", "mean", "called in", "time"]
+        return !notAboutAThing.contains { t.contains($0) }
     }
 
     /// True for sentences that clearly start a command, even as an answer to the AI's question.

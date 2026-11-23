@@ -26,6 +26,7 @@ struct DeskCompanionApp: App {
     @StateObject private var briefing = BriefingService()
     @StateObject private var commands = CommandStore()
     @StateObject private var control = AppControl()
+    @StateObject private var stability = StabilityMonitor.shared
 
     init() {
         // Alarms ring inside the app; the backup notification is only for when the app isn't open.
@@ -60,6 +61,7 @@ struct DeskCompanionApp: App {
                 .environmentObject(noise)
                 .environmentObject(briefing)
                 .environmentObject(commands)
+                .environmentObject(stability)
                 .onAppear {
                     ai.app = app
                     noise.speech = speech
