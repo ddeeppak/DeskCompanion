@@ -27,18 +27,38 @@ struct VoiceSettings: View {
 
     private var wakeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Hey Desk")
+            SectionLabel("Wake phrase")
             VStack(spacing: 0) {
                 SettingsRow {
                     Image(systemName: "waveform.circle.fill").foregroundColor(theme.accent).frame(width: 24)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Listen for “Hey Desk”")
+                        Text("Listen for “\(wake.phrase)”")
                         Text(wakeStatus).font(.system(size: 13)).foregroundColor(theme.secondaryLabel)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
                     Toggle("", isOn: $wake.enabled).labelsHidden().toggleStyle(SwitchToggleStyle(tint: theme.toggleOn))
                 }
                 .padding(.vertical, 3)
+                RowSeparator()
+                SettingsRow {
+                    Image(systemName: "text.bubble.fill").foregroundColor(theme.accent2).frame(width: 24)
+                    Text("Phrase")
+                    Spacer(minLength: 8)
+                    Menu {
+                        ForEach(WakeWordService.presets, id: \.self) { preset in
+                            Button(preset) { wake.phrase = preset }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(wake.phrase)
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(theme.accent)
+                    }
+                }
+                RowSeparator()
+                testRow
                 if wake.enabled {
                     RowSeparator()
                     SettingsRow {
@@ -50,14 +70,79 @@ struct VoiceSettings: View {
                 }
             }
             .groupedBox()
-            footnote("Say “Hey Desk” or “Hey Desk, what's the weather?”. Listening happens only on this iPhone and only while someone is at the desk; nothing is recorded or sent until you say Hey Desk. It uses more battery and warmth, and pauses itself if the phone gets hot.")
+            footnote("Say “\(wake.phrase)” or “\(wake.phrase), what's the weather?”. Listening happens only on this iPhone and only while someone is at the desk; nothing is recorded or sent until you say the phrase. Longer phrases (Hey Companion) are caught more reliably than short ones. It uses some battery and warmth, and pauses if the phone gets hot.")
+        }
+    }
+
+    /// "Test": say the phrase and see what the phone hears.
+    private var testRow: some View {
+        SettingsRow {
+            Image(systemName: testSymbol).foregroundColor(testColor).frame(width: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(testTitle)
+                if !testDetail.isEmpty {
+                    Text(testDetail).font(.system(size: 13)).foregroundColor(theme.secondaryLabel)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            if wake.testState == .listening {
+                Button("Stop") { wake.cancelTest() }
+                    .foregroundColor(theme.red)
+                    .frame(minWidth: 44, minHeight: 44)
+            } else {
+                Button(wake.testState == .idle ? "Test" : "Try again") { wake.startTest() }
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(theme.accent)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+        }
+        .padding(.vertical, 3)
+        .animation(.easeInOut(duration: 0.2), value: wake.testState)
+    }
+
+    private var testSymbol: String {
+        switch wake.testState {
+        case .idle: return "mic.circle"
+        case .listening: return "mic.circle.fill"
+        case .success: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        }
+    }
+
+    private var testColor: Color {
+        switch wake.testState {
+        case .idle: return theme.secondaryLabel
+        case .listening: return theme.accent
+        case .success: return theme.green
+        case .failed: return theme.red
+        }
+    }
+
+    private var testTitle: String {
+        switch wake.testState {
+        case .idle: return "Test the wake phrase"
+        case .listening: return "Say “\(wake.phrase)” now…"
+        case .success: return "Heard it, it works!"
+        case .failed: return "Didn't catch “\(wake.phrase)”"
+        }
+    }
+
+    private var testDetail: String {
+        switch wake.testState {
+        case .idle: return "Checks that this iPhone hears your phrase (doesn't open the assistant)"
+        case .listening: return wake.heardPreview.isEmpty ? "Listening…" : "Hearing: “\(wake.heardPreview)”"
+        case .success: return "It heard: “\(wake.testHeard)”"
+        case .failed:
+            if let reason = wake.unavailableReason { return reason }
+            if wake.testHeard.isEmpty { return "It heard nothing. Speak a little louder, facing the phone." }
+            return "It heard: “\(wake.testHeard)”. Try again a bit slower, or pick a longer phrase like Hey Companion."
         }
     }
 
     private var wakeStatus: String {
         if let reason = wake.unavailableReason, wake.enabled { return reason }
-        if !wake.enabled { return "Off" }
-        return wake.running ? "Listening now" : "Paused (busy, away or night)"
+        return wake.status
     }
 
     private var briefingsSection: some View {

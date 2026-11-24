@@ -111,11 +111,16 @@ struct DeskCompanionApp: App {
                     let wake = WakeWordService.shared
                     wake.noise = noise
                     wake.localeID = speech.localeID
-                    wake.allowed = {
-                        !speech.isListening && !voice.isBusy && alarms.ringing == nil
-                            && [.idle, .answered, .misheard].contains(assistant.phase) && !assistant.germanMode
-                            && !(night.showNight && !wake.atNight) && !presence.isAway
-                            && UIApplication.shared.applicationState == .active
+                    wake.blocker = {
+                        if UIApplication.shared.applicationState != .active { return "the app isn't open" }
+                        if speech.isListening { return "the assistant is listening" }
+                        if voice.isBusy { return "the assistant is speaking" }
+                        if alarms.ringing != nil { return "an alarm is ringing" }
+                        if assistant.germanMode { return "German practice is on" }
+                        if ![.idle, .answered, .misheard].contains(assistant.phase) { return "the assistant is busy" }
+                        if night.showNight && !wake.atNight { return "night mode (turn on “Also at night”)" }
+                        if presence.isAway { return "nobody seen at the desk (front camera)" }
+                        return nil
                     }
                     wake.onWake = { said in
                         presence.markPresent()
